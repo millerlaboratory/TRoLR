@@ -7,15 +7,16 @@
 #
 set -euo pipefail
 
-BAM1=$1
-BAM2=$2
-KARYOTYPE=${3:-XX}
-OUTPUT_DIR=${4:-$(pwd)}
 
 if [[ $# -lt 3 ]]; then
   echo "Usage: $0 <BAM_HP1> <BAM_HP2> <KARYOTYPE: XX|XY> [OUTPUT_DIR]"
   exit 1
 fi
+
+BAM1=$1
+BAM2=$2
+KARYOTYPE=${3:-XX}
+OUTPUT_DIR=${4:-$(pwd)}
 
 if [[ ! -f "$BAM1" ]]; then echo "BAM not found: $BAM1"; exit 1; fi
 if [[ ! -f "$BAM2" ]]; then echo "BAM not found: $BAM2"; exit 1; fi
