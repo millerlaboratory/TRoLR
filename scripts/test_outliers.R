@@ -29,7 +29,7 @@ formatted_data <- data %>%
   dplyr::mutate(count = as.numeric(count)) %>%
   dplyr::select(locus, sample, hp, motif, count)
 
-ref_data <- data.table::fread("/n/users/sgibson/Projects/TANDEM_REPEATS/MiniSTR/ASM/reference_data/vamos_asm_lps_e0.1_247_annotated_summary_stats_withOMIM.bed")
+ref_data <- data.table::fread("/n/users/sgibson/Projects/TANDEM_REPEATS/TRoLR/reference_data/vamos_asm_lps_e0.1_247_annotated_summary_stats_withOMIM.bed")
 
 joined <- formatted_data %>%
   dplyr::left_join(ref_data, by = c("locus", "motif"), relationship = "many-to-many")

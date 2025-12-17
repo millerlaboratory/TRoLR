@@ -1,39 +1,43 @@
 #!/bin/bash
 #
-# MiniSTR.sh - per-sample pipeline for two haplotype-aware BAMs
+#   TANDEM REPEAT OUTLIERS identified via LONG READS (TRoLR)
+# TRoLR.sh - per-sample pipeline for two haplotype-aware BAMs
 #
-# Usage: MiniSTR.sh <BAM_HP1> <BAM_HP2> <KARYOTYPE: XX|XY> <REF_FA> [OUTPUT_DIR]
+# Usage: TRoLR.sh <BAM_HP1> <BAM_HP2> <KARYOTYPE: XX|XY> [OUTPUT_DIR]
 #
 set -euo pipefail
 
 BAM1=$1
 BAM2=$2
 KARYOTYPE=${3:-XX}
-REF=${4:-""}
-OUTPUT_DIR=${5:-$(pwd)}
+OUTPUT_DIR=${4:-$(pwd)}
 
-if [[ $# -lt 4 ]]; then
-  echo "Usage: $0 <BAM_HP1> <BAM_HP2> <KARYOTYPE: XX|XY> <REF_FA> [OUTPUT_DIR]"
+if [[ $# -lt 3 ]]; then
+  echo "Usage: $0 <BAM_HP1> <BAM_HP2> <KARYOTYPE: XX|XY> [OUTPUT_DIR]"
   exit 1
 fi
 
 if [[ ! -f "$BAM1" ]]; then echo "BAM not found: $BAM1"; exit 1; fi
 if [[ ! -f "$BAM2" ]]; then echo "BAM not found: $BAM2"; exit 1; fi
 
-# Resources - adjust to your environment
-MOTIFS=/n/users/sgibson/Projects/TANDEM_REPEATS/VAMOS_2.4_500/vamos.motif.hg38.v2.1.e0.1.noSTRCHIVE.nohp.bed
-STRCHIVE=/n/users/sgibson/Projects/TANDEM_REPEATS/VAMOS_R10_asm/vamos_strchive.B2FLLAIV.20250520.bed
-LPS=/n/users/sgibson/Projects/TANDEM_REPEATS/MiniSTR/ASM/scripts/vamos_lps.py
-ANNO=/n/users/sgibson/reference/BED/RefSeq/5_CANONICAL_EXONS_INTRONS_UTR_simplified.bed
-STRCHIVE_INFO=/n/users/sgibson/Projects/TANDEM_REPEATS/MiniSTR/reference_data/STRchive-disease-loci-v2.4.3.hg38.CE2vK2zA.tsv
-PATHOGENIC_DETECTOR=/n/users/sgibson/Projects/TANDEM_REPEATS/MiniSTR/ASM/scripts/strchive_pathogenic_detector.py
-TEST_OUTLIERS_R=/n/users/sgibson/Projects/TANDEM_REPEATS/MiniSTR/ASM/scripts/test_outliers.R
-CONTROL_FILE=/n/users/sgibson/Projects/TANDEM_REPEATS/MiniSTR/ASM/reference_data/ALL_DATA_FOR_PLOTTING.tsv.gz
+# Allow overriding repo location with REPO_ROOT; otherwise infer from this script's directory
+# This script resides at the repo root, so no parent traversal
+REPO_ROOT=${REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}
 
-module load bedtools/2.31.1
-module load samtools/1.22
-module load R
-source activate vamos-env || source activate vamos-env || true
+# Resources - relative to repo root
+MOTIFS="$REPO_ROOT/reference_data/vamos.motif.hg38.v2.1.e0.1.noSTRCHIVE.nohp.bed"
+STRCHIVE="$REPO_ROOT/reference_data/vamos_strchive.B2FLLAIV.20250520.bed"
+LPS="$REPO_ROOT/scripts/vamos_lps.py"
+ANNO="$REPO_ROOT/reference_data/5_CANONICAL_EXONS_INTRONS_UTR_simplified.bed"
+STRCHIVE_INFO="$REPO_ROOT/reference_data/STRchive-disease-loci-v2.4.3.hg38.CE2vK2zA.tsv"
+PATHOGENIC_DETECTOR="$REPO_ROOT/scripts/strchive_pathogenic_detector.py"
+TEST_OUTLIERS_R="$REPO_ROOT/scripts/test_outliers.R"
+CONTROL_FILE="$REPO_ROOT/reference_data/ALL_DATA_FOR_PLOTTING.tsv.gz"
+
+#module load bedtools/2.31.1
+#module load samtools/1.22
+#module load R
+#source activate vamos-env || source activate vamos-env || true
 
 #mkdir -p "$OUTPUT_DIR"
 cd "$OUTPUT_DIR"
@@ -52,7 +56,7 @@ sample="$sample1"
 sample_dir="${OUTPUT_DIR}/${sample}"
 mkdir -p "$sample_dir"
 
-echo "Running MiniSTR for sample: $sample (karyotype=$KARYOTYPE)"
+echo "Running TRoLR for sample: $sample (karyotype=$KARYOTYPE)"
 echo "BAMs: $BAM1 , $BAM2"
 
 # Map bam -> hap number by checking filename suffixes; fallback to 1/2 ordering
@@ -88,13 +92,12 @@ for hap in 1 2; do
   if [[ ! -f "$strchive_plain" ]]; then
     echo "Running vamos STRchive on hap${hap}"
     vamos --contig -b "$bam" -r "$STRCHIVE" -s "${sample}_hp${hap}" -S -o "$strchive_plain" -t 20 || true
-    #if [[ -f "$strchive_plain" ]]; then bgzip -f "$strchive_plain"; fi
   else
     echo "STRchive VCF exists for ${sample}_hp${hap}, skipping"
   fi
 done
 
-source deactivate vamos-env || true
+#source deactivate vamos-env || true
 
 # Run vamos_lps.py to produce LPS bed using non-strchive vcfs (*.vcf.gz)
 lps_bed="${sample_dir}/${sample}_lps.bed"
@@ -111,13 +114,13 @@ fi
 # Run test_outliers.R to produce outliers table (passes karyotype)
 outliers_file="${sample_dir}/${sample}_lps_annotated_outliers.bed"
 if [[ ! -f "$outliers_file" ]]; then
-  Rscript "$TEST_OUTLIERS_R" "$annotated_bed" "$outliers_file" "${KARYOTYPE}"
+  Rscript "$TEST_OUTLIERS_R" "$annotated_bed" "$outliers_file" "$KARYOTYPE"
 fi
 
 # Run pathogenic detector on strchive vcfs if available
 pathogenic_file="${sample_dir}/${sample}_pathogenic_results.tsv"
-hp1_vcf="${sample_dir}/${sample}_hp1.strchive.vcf"
-hp2_vcf="${sample_dir}/${sample}_hp2.strchive.vcf"
+hp1_vcf="${sample_dir}/${sample}_hp1.strchive.vcf.gz"
+hp2_vcf="${sample_dir}/${sample}_hp2.strchive.vcf.gz"
 # fall back to plain strchive names if different extension
 hp1_vcf_alt="${sample_dir}/${sample}_hp1.strchive.vcf"
 hp2_vcf_alt="${sample_dir}/${sample}_hp2.strchive.vcf"
@@ -195,11 +198,16 @@ if(!("type" %in% colnames(out))) {
   }
 }
 
+# Filter outliers: for introns, only plot if count >= 100
 out_filt <- out %>%
-  filter(!is.na(motif_len) & motif_len >= 3 & tolower(type) %in% c("exon","utr","intron"))
+  filter(!is.na(motif_len) & motif_len >= 3) %>%
+  filter(
+    (tolower(type) %in% c("exon", "utr")) |
+    (tolower(type) == "intron" & !is.na(count) & count >= 100)
+  )
 
 if(nrow(out_filt) == 0) {
-  message("No exon/UTR/intron outliers with motif_len >= 3 to plot.")
+  message("No outliers meeting criteria to plot.")
   quit(status=0)
 }
 
@@ -234,8 +242,8 @@ for(i in seq_len(nrow(out_pairs))) {
   if(nrow(ctrl_sub) == 0) next
 
   p <- ggplot(ctrl_sub, aes(x = count)) +
-    geom_histogram(fill = "steelblue", color = "black", bins = 30, alpha = 0.8) +
-    theme_minimal() +
+    geom_histogram(fill = "steelblue", color = "black", alpha = 0.8) +
+    theme_classic() +
     labs(title = paste0(type_i, " outlier: ", locus_i, " (", motif_i, ")"),
          subtitle = paste0("Sample: ", sample_name, " — sample count: ", ifelse(is.na(sample_count), "NA", sample_count)),
          x = "Copy number (count)", y = "Frequency")
@@ -271,7 +279,7 @@ report_html="${sample_dir}/${sample}_outlier_report.html"
 
 cat > "$report_rmd" <<'RMD'
 ---
-title: "MiniSTR Outlier Report - SAMPLE_PLACEHOLDER"
+title: "TRoLR Outlier Report - SAMPLE_PLACEHOLDER"
 output:
   html_document:
     toc: true
@@ -336,6 +344,9 @@ if(file.exists(outliers_path)){
   if(nrow(out)>0){
     # motif length (robust)
     out$motif_len <- ifelse(is.na(out$motif), 0L, nchar(as.character(out$motif)))
+    # Convert count to numeric
+    out$count <- suppressWarnings(as.numeric(out$count))
+    
     short_motifs <- out %>% filter(motif_len < 3)
     long_motifs  <- out %>% filter(motif_len >= 3)
 
@@ -354,9 +365,16 @@ if(file.exists(outliers_path)){
 
     # Select only loci with motif_len >= 3 for these tables
     exon_tab   <- long_motifs[is_exon, , drop=FALSE]
-    utr_tab    <- long_motifs[!is_exon & is_utr, , drop=FALSE]  # prefer exon first, then UTR
-    intron_tab <- long_motifs[!is_exon & !is_utr & is_intron, , drop=FALSE]
-    other_tab  <- long_motifs[!is_exon & !is_utr & !is_intron, , drop=FALSE]
+    utr_tab    <- long_motifs[!is_exon & is_utr, , drop=FALSE]
+    
+    # For introns: only include if count >= 100
+    intron_candidates <- long_motifs[!is_exon & !is_utr & is_intron, , drop=FALSE]
+    intron_tab <- intron_candidates %>% filter(!is.na(count) & count >= 100)
+    intron_low_count <- intron_candidates %>% filter(is.na(count) | count < 100)
+    
+    # Other table includes non-annotated plus low-count introns
+    other_tab_base <- long_motifs[!is_exon & !is_utr & !is_intron, , drop=FALSE]
+    other_tab <- rbind(other_tab_base, intron_low_count)
   } else {
     cat("No outliers found.\n")
   }
@@ -397,13 +415,14 @@ if(exists("utr_tab") && nrow(utr_tab) > 0 && length(plot_files) > 0) {
 }
 ```
 
-### Intron outliers
+### Intron outliers (count ≥ 100)
 
 ```{r intron-outliers-table, results='asis'}
 if(exists("intron_tab") && nrow(intron_tab) > 0){
+  cat("*Note: Only showing intron outliers with count ≥ 100. Lower count intron outliers are in the Other/Unclassified section.*\n\n")
   DT::datatable(intron_tab, options=list(pageLength=25, scrollX=TRUE))
 } else {
-  cat("No intron outliers found.\n\n")
+  cat("No intron outliers with count ≥ 100 found.\n\n")
 }
 ```
 
@@ -417,6 +436,7 @@ if(exists("intron_tab") && nrow(intron_tab) > 0 && length(plot_files) > 0) {
 
 ```{r other-outliers-table, results='asis'}
 if(exists("other_tab") && nrow(other_tab) > 0){
+  cat("*Includes non-annotated outliers and intron outliers with count < 100.*\n\n")
   DT::datatable(other_tab, options=list(pageLength=25, scrollX=TRUE))
 } else {
   cat("No other/unclassified outliers found.\n\n")
