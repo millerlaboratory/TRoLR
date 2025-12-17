@@ -20,16 +20,6 @@ TRoLR processes haplotype-aware BAM files to:
 -Conda or Mamba package manager
 -R (>= 4.0)
 -Python (>= 3.8)
-### Required Software
-
-The following tools need to be installed:
-- `vamos` for tandem repeat calling
-- `bedtools`
- (>= 2.31.1)
-- `samtools`
- (>= 1.22)
-- `bgzip`
- (part of htslib)
 
 ### Quick Install
 
@@ -38,7 +28,7 @@ bash
 
 # Clone the repository
 
-git clone https://github.com/yourusername/TRoLR.git
+git clone github.com/millerlaboratory/TRoLR/TRoLR.git
 cd TRoLR
 
 
@@ -47,9 +37,7 @@ cd TRoLR
 conda env create -f environment.yml
 conda activate trolr-env
 
-# Install R packages
-
-Rscript scripts/install_R_packages.R
+chmod +x TRoLR.sh
 
 ```
 
@@ -59,8 +47,7 @@ Rscript scripts/install_R_packages.R
 
 ```
 bash
-
-
+./TRoLR.sh <BAM_HP1> <BAM_HP2> <KARYOTYPE: XX|XY> [OUTPUT_DIR]
 
 ```
 
