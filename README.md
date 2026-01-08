@@ -45,6 +45,8 @@ chmod +x TRoLR.sh
 
 ### Basic Usage
 
+**TRoLR takes haplotype-resolved assemblies aligned to hg38 as its input, it is recommened to generate these from fastq files using hifiasm:https://github.com/chhylp123/hifiasm**
+
 ```
 bash
 ./TRoLR.sh <BAM_HP1> <BAM_HP2> <KARYOTYPE: XX|XY> [OUTPUT_DIR]
@@ -76,6 +78,10 @@ bash
 
 ./TRoLR.sh sample_hap1.hg38.bam sample_hap2.hg38.bam XY ./results/
 
+Using the HG002 sample data from *chr9:82230983-92919503*, you can test the program by running
+
+./TRoLR.sh HG002_sample_data/HG002_asm_1.hg38.bam HG002_sample_data/HG002_asm_2.hg38.bam XY ./results/
+
 ```
 
 ## Output
@@ -99,4 +105,15 @@ The pipeline generates a sample-specific directory containing:
 ```
 
 ## Reference Data
+
+```
+vamos.motif.hg38.v2.1.e0.1.noSTRCHIVE.nohp.bed.gz  #TR catalog
+vamos_strchive.B2FLLAIV.20250520.bed  #STRChive Catalog
+GENCODE_v.45_CANONICAL.bed  #Gencode v45 annotation
+STRchive-disease-loci-v2.4.3.hg38.CE2vK2zA.tsv. #STRChive information including pathogenic thresholds
+vamos_asm_lps_e0.1_247_catalog_control_length_counts.tsv.gz  #The count of each LPS length at each locus. For generating plots
+amos_asm_lps_control_summary.tsv.gz  #Summary statistics for identifing outliers
+
+```
+
 
