@@ -26,14 +26,15 @@ if [[ ! -f "$BAM2" ]]; then echo "BAM not found: $BAM2"; exit 1; fi
 REPO_ROOT=${REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}
 
 # Resources - relative to repo root
-MOTIFS="$REPO_ROOT/reference_data/vamos.motif.hg38.v2.1.e0.1.noSTRCHIVE.nohp.bed"
+MOTIFS="$REPO_ROOT/reference_data/vamos.motif.hg38.v2.1.e0.1.noSTRCHIVE.nohp.bed.gz"
 STRCHIVE="$REPO_ROOT/reference_data/vamos_strchive.B2FLLAIV.20250520.bed"
 LPS="$REPO_ROOT/scripts/vamos_lps.py"
-ANNO="$REPO_ROOT/reference_data/5_CANONICAL_EXONS_INTRONS_UTR_simplified.bed"
+ANNO="$REPO_ROOT/reference_data/GENCODE_v.45_CANONICAL.bed"
 STRCHIVE_INFO="$REPO_ROOT/reference_data/STRchive-disease-loci-v2.4.3.hg38.CE2vK2zA.tsv"
 PATHOGENIC_DETECTOR="$REPO_ROOT/scripts/strchive_pathogenic_detector.py"
-TEST_OUTLIERS_R="$REPO_ROOT/scripts/test_outliers.R"
-CONTROL_FILE="$REPO_ROOT/reference_data/ALL_DATA_FOR_PLOTTING.tsv.gz"
+TEST_OUTLIERS_R="$REPO_ROOT/scripts/outliers.R"
+CONTROL_FILE="$REPO_ROOT/reference_data/vamos_asm_lps_e0.1_247_catalog_control_length_counts.tsv.gz"
+REF_FILE="$REPO_ROOT/reference_data/vamos_asm_lps_control_summary.tsv.gz"
 
 #module load bedtools/2.31.1
 #module load samtools/1.22
@@ -115,7 +116,7 @@ fi
 # Run test_outliers.R to produce outliers table (passes karyotype)
 outliers_file="${sample_dir}/${sample}_lps_annotated_outliers.bed"
 if [[ ! -f "$outliers_file" ]]; then
-  Rscript "$TEST_OUTLIERS_R" "$annotated_bed" "$outliers_file" "$KARYOTYPE"
+  Rscript "$TEST_OUTLIERS_R" "$annotated_bed" "$outliers_file" "$KARYOTYPE" "$REF_FILE"
 fi
 
 # Run pathogenic detector on strchive vcfs if available
@@ -230,20 +231,21 @@ ctrl$count <- suppressWarnings(as.numeric(ctrl$count))
 
 if(!dir.exists(plots_dir)) dir.create(plots_dir, recursive=TRUE)
 
-out_pairs <- out_filt %>% select(locus, motif, type) %>% distinct()
+out_pairs <- out_filt %>% select(locus, motif, type, gene) %>% distinct()
 
 for(i in seq_len(nrow(out_pairs))) {
   locus_i <- out_pairs$locus[i]
   motif_i <- out_pairs$motif[i]
   type_i  <- out_pairs$type[i]
+  gene_i <- out_pairs$gene[i]
   sample_count <- max(out_filt$count[out_filt$locus == locus_i & out_filt$motif == motif_i], na.rm=TRUE)
   if(is.infinite(sample_count)) sample_count <- NA_real_
 
-  ctrl_sub <- ctrl %>% filter(locus == locus_i & motif == motif_i)
+  ctrl_sub <- ctrl %>% filter(locus == locus_i & motif == motif_i & type == type_i, gene == gene_i)
   if(nrow(ctrl_sub) == 0) next
 
-  p <- ggplot(ctrl_sub, aes(x = count)) +
-    geom_histogram(fill = "steelblue", color = "black", alpha = 0.8) +
+  p <- ggplot(ctrl_sub, aes(x = count, y=n_alleles)) +
+    geom_bar(stat="identity",fill = "#48379E", color = "black", alpha = 0.8) +
     theme_classic() +
     labs(title = paste0(type_i, " outlier: ", locus_i, " (", motif_i, ")"),
          subtitle = paste0("Sample: ", sample_name, " — sample count: ", ifelse(is.na(sample_count), "NA", sample_count)),
@@ -285,9 +287,10 @@ output:
   html_document:
     toc: true
     toc_float: true
-    theme: cosmo
+    theme: flatly
 date: "`r Sys.Date()`"
 ---
+*Outliers identified in TRoLR analysis pipeline. May not reflect all repeat expansions in the sample. Please refer to the full TRoLR pipeline outputs for comprehensive variant data. Not indented for clinical use.*
 
 ```{r setup, include=FALSE}
 library(knitr)
@@ -313,6 +316,55 @@ display_plots_for_type <- function(type_name, plot_files) {
       cat(sprintf("![](%s){width=85%%}\n\n", plot_file))
     }
   }
+}
+```
+
+## Summary
+
+```{r summary-table, results='asis'}
+if(file.exists(outliers_path)){
+  out <- read.delim(outliers_path, header=TRUE, sep="\t", stringsAsFactors=FALSE)
+  if(nrow(out) > 0){
+    # motif length
+    out$motif_len <- ifelse(is.na(out$motif), 0L, nchar(as.character(out$motif)))
+    out$count <- suppressWarnings(as.numeric(out$count))
+    
+    # Build type classification
+    char_cols <- names(out)[sapply(out, is.character)]
+    if(length(char_cols) > 0){
+      type_text <- apply(out[, char_cols, drop=FALSE], 1, function(r) paste(na.omit(r), collapse=" "))
+      is_exon   <- grepl("exon", type_text, ignore.case = TRUE, perl = TRUE)
+      is_utr    <- grepl("UTR", type_text, ignore.case = TRUE, perl = TRUE)
+      is_intron <- grepl("intron", type_text, ignore.case = TRUE, perl = TRUE)
+    } else {
+      is_exon <- is_utr <- is_intron <- rep(FALSE, nrow(out))
+    }
+    
+    # Count each category
+    short_count <- sum(out$motif_len < 3)
+    long_mask <- out$motif_len >= 3
+    
+    exon_count <- sum(is_exon & long_mask)
+    utr_count <- sum(!is_exon & is_utr & long_mask)
+    intron_high <- sum(!is_exon & !is_utr & is_intron & !is.na(out$count) & out$count >= 100 & long_mask)
+    intron_low <- sum(!is_exon & !is_utr & is_intron & (is.na(out$count) | out$count < 100) & long_mask)
+    other_count <- sum(!is_exon & !is_utr & !is_intron & long_mask)
+    
+    summary_df <- data.frame(
+      Type = c("Exon", "UTR", "Intron (count ≥ 100)", "Intron (count < 100)", "Other/Unclassified", "Short motifs (<3 bp)"),
+      Count = c(exon_count, utr_count, intron_high, intron_low, other_count, short_count)
+    )
+    
+    cat("**Outlier type summary:**\n\n")
+    DT::datatable(summary_df, 
+                  options = list(paging = FALSE, searching = FALSE, info = FALSE, 
+                                dom = 't', columnDefs = list(list(className = 'dt-center', targets = 1))),
+                  rownames = FALSE)
+  } else {
+    cat("No outliers found in analysis.\n")
+  }
+} else {
+  cat("Outliers data not available.\n")
 }
 ```
 

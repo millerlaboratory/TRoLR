@@ -334,21 +334,16 @@ class TRGTPathogenicDetector:
                                 copy_numbers = self._calculate_copy_numbers(repeat_info, disease_locus)
                                 
                                 result = {
-                                    'sample': sample_name,
-                                    'vcf_file': Path(vcf_file).name,
                                     'chromosome': vcf_record['chrom'],
                                     'position': vcf_record['pos'],
                                     'gene': disease_locus['gene'],
                                     'disease': disease_locus['disease'],
                                     'inheritance': disease_locus['inheritance'],
                                     'reference_motif': disease_locus['reference_motif_reference_orientation'],
-                                    'pathogenic_threshold': disease_locus['pathogenic_min'],
                                     'observed_motifs': ','.join(repeat_info['motifs']),
+                                    'pathogenic_threshold': disease_locus['pathogenic_min'],
                                     'allele_lengths_bp': ','.join(map(str, repeat_info['allele_lengths'])),
                                     'calculated_copy_numbers': ','.join(map(str, copy_numbers)),
-                                    'pathogenic_alleles': ','.join(map(str, pathogenic_alleles)),
-                                    'vcf_id': vcf_record['id'],
-                                    'quality': vcf_record['qual'],
                                     'filter': vcf_record['filter']
                                 }
                                 

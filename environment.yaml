@@ -28,7 +28,7 @@ dependencies:
   - r-digest
   - r-htmltools
   - r-tidyverse
-  - r-utils
+  - r-r.utils
   
   # Development tools
   - pip

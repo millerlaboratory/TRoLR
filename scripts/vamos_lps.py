@@ -229,10 +229,8 @@ def write_bed_file(results, output_file):
             start = result['POS'] - 1
             end = result['END']
             name = f"{result['SAMPLE_ID']}|{result['LONGEST_MOTIF']}|{result['REPEAT_COUNT']}"
-            score = result['REPEAT_COUNT']  # Use repeat count as score
-            strand = "."
             
-            f.write(f"{result['CHROM']}\t{start}\t{end}\t{name}\t{score}\t{strand}\n")
+            f.write(f"{result['CHROM']}\t{start}\t{end}\t{name}\n")
 
 def print_summary(results):
     """Print summary statistics."""
