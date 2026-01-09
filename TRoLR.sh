@@ -26,7 +26,7 @@ if [[ ! -f "$BAM2" ]]; then echo "BAM not found: $BAM2"; exit 1; fi
 REPO_ROOT=${REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}
 
 # Resources - relative to repo root
-MOTIFS="$REPO_ROOT/reference_data/vamos.motif.hg38.v2.1.e0.1.noSTRCHIVE.nohp.bed.gz"
+MOTIFS="$REPO_ROOT/reference_data/vamos.motif.hg38.v2.1.e0.1.noSTRCHIVE.nohp.bed"
 STRCHIVE="$REPO_ROOT/reference_data/vamos_strchive.B2FLLAIV.20250520.bed"
 LPS="$REPO_ROOT/scripts/vamos_lps.py"
 ANNO="$REPO_ROOT/reference_data/GENCODE_v.45_CANONICAL.bed"

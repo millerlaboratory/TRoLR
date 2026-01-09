@@ -39,6 +39,10 @@ conda activate trolr-env
 
 chmod +x TRoLR.sh
 
+#Uncompress motif file to use with vamos
+
+gunzip reference_data/vamos.motif.hg38.v2.1.e0.1.noSTRCHIVE.nohp.bed.gz
+
 ```
 
 ## Usage
