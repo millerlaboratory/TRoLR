@@ -23,7 +23,7 @@ class TRGTPathogenicDetector:
     def __init__(self, disease_loci_file: str):
         """Initialize the detector with disease loci reference data."""
         self.disease_loci = self._load_disease_loci(disease_loci_file)
-        self.skipped_genes = {'COMP', 'FOXL2', 'DMD', 'MUC1', 'VWA1', 'pre-MIR7-2', 'POLG'}
+        self.skipped_genes = {'COMP', 'FOXL2', 'DMD', 'MUC1', 'VWA1', 'MIR7-2', 'POLG', 'XYLT1', 'ZIC3', 'NIPA1'}
         
     def _load_disease_loci(self, file_path: str) -> pd.DataFrame:
         """Load and process the disease loci reference file."""
@@ -87,30 +87,31 @@ class TRGTPathogenicDetector:
 
         This is more robust to STRchive/VAMOS-style VCFs (RU, ALTANNO_H1, ALTANNO_H2, LEN_H1, LEN_H2)
         while still supporting TRGT-style AL/MC fields in the sample columns.
+        
+        For ALTANNO fields: values are INDICES into the RU (motif) list, not repeat counts.
         """
         try:
             info = vcf_record['info'] or {}
             motifs = []
             allele_lengths = []
-            motif_counts = []
+            altanno_sequences = []  # Store ALTANNO as index sequences
             
             # Prefer RU from INFO as motif list (VAMOS / STRchive)
             if 'RU' in info and info['RU']:
                 motifs = [m for m in info['RU'].split(',') if m != '']
             
-            # ALTANNO_H1 / ALTANNO_H2 contain motif count series like "0-0-1-0-..."
+            # ALTANNO_H1 / ALTANNO_H2 contain motif INDEX sequences like "0-3-4-4-4-..."
+            # Each number is an index into the RU motif list
             for altanno_key in ('ALTANNO_H1', 'ALTANNO_H2'):
                 if altanno_key in info and info[altanno_key] and info[altanno_key] != '.':
-                    parts = info[altanno_key].split('-')
-                    # convert to underscore-separated counts to be compatible with existing logic
-                    # and keep as string (existing code expects strings like "1_0_2")
                     try:
-                        nums = [str(int(x)) for x in parts if x != '' and x != '.']
-                        if nums:
-                            motif_counts.append('_'.join(nums))
+                        # Parse as hyphen-separated indices
+                        indices = [int(x) for x in info[altanno_key].split('-') if x != '' and x != '.']
+                        if indices:
+                            altanno_sequences.append(indices)
                     except ValueError:
-                        # non-numeric ALTANNO values: keep raw joined string as fallback
-                        motif_counts.append('_'.join(parts))
+                        # non-numeric ALTANNO values: skip
+                        pass
             
             # LEN_H1 / LEN_H2 provide allele length in bp (secondary info)
             for len_key in ('LEN_H1', 'LEN_H2'):
@@ -138,22 +139,20 @@ class TRGTPathogenicDetector:
                         except ValueError:
                             pass
                 
-                if 'MC' in sample_dict and sample_dict['MC'] != '.':
-                    mc_values = sample_dict['MC'].split(',')
-                    motif_counts.extend([x for x in mc_values if x != '.' and x != ''])
+                # MC field format is different - these are repeat counts, not indices
+                # We'll handle this separately if ALTANNO is not available
             except Exception:
-                # ignore parsing issues here, we already used INFO-first strategy
                 pass
             
             return {
                 'motifs': motifs,
                 'allele_lengths': allele_lengths,
-                'motif_counts': motif_counts
+                'altanno_sequences': altanno_sequences  # List of index sequences
             }
             
         except (ValueError, IndexError, KeyError) as e:
             logger.warning(f"Could not extract repeat information: {e}")
-            return {'motifs': [], 'allele_lengths': [], 'motif_counts': []}
+            return {'motifs': [], 'allele_lengths': [], 'altanno_sequences': []}
     
     def _find_matching_disease_locus(self, chrom: str, pos: int) -> Optional[pd.Series]:
         """Find matching disease locus for given chromosome and position."""
@@ -166,133 +165,103 @@ class TRGTPathogenicDetector:
             return position_matches.iloc[0]
         return None
     
-    def _calculate_copy_numbers(self, repeat_info: Dict, disease_locus: pd.Series) -> List[int]:
-        """Calculate copy numbers from TRGT data."""
+    def _calculate_copy_numbers(self, repeat_info: Dict, disease_locus: pd.Series) -> Tuple[List[int], List[str]]:
+        """Calculate copy numbers from TRGT data and return detected pathogenic motifs.
+        
+        For ALTANNO format: each value is an INDEX into the RU motif list.
+        Count how many times pathogenic motif indices appear in the sequence.
+        
+        Returns:
+            Tuple of (copy_numbers, detected_pathogenic_motifs)
+        """
         copy_numbers = []
+        detected_motifs = []
         
-        if repeat_info['motif_counts']:
-            reference_motif = disease_locus.get('reference_motif_reference_orientation', '')
-            pathogenic_motifs = disease_locus.get('pathogenic_motif_reference_orientation', '') or ''
-            motifs = repeat_info.get('motifs', []) or []
+        # Get pathogenic motif information
+        pathogenic_motifs_str = disease_locus.get('pathogenic_motif_reference_orientation', '') or ''
+        pathogenic_motif_list = [m.strip() for m in pathogenic_motifs_str.split(',')] if ',' in pathogenic_motifs_str else [pathogenic_motifs_str.strip()]
+        pathogenic_motif_list = [m for m in pathogenic_motif_list if m and m.upper() != 'NONE']
+        
+        motifs = repeat_info.get('motifs', []) or []
+        altanno_sequences = repeat_info.get('altanno_sequences', [])
+        
+        # Primary method: Use ALTANNO sequences (indices into RU/motifs list)
+        if altanno_sequences and motifs:
+            # Build set of pathogenic indices by matching motifs to pathogenic list
+            pathogenic_indices = set()
+            for i, motif in enumerate(motifs):
+                if any(motif.upper() == pm.upper() for pm in pathogenic_motif_list):
+                    pathogenic_indices.add(i)
             
-            try:
-                # Normalize pathogenic motif list
-                pathogenic_motif_list = [m.strip() for m in pathogenic_motifs.split(',')] if ',' in pathogenic_motifs else [pathogenic_motifs.strip()]
-                pathogenic_motif_list = [m for m in pathogenic_motif_list if m]
+            if not pathogenic_indices:
+                # No pathogenic motifs found in the motif list
+                logger.warning(f"No pathogenic motifs found in RU motif list")
+            
+            # Count occurrences of pathogenic indices in each ALTANNO sequence
+            for idx_sequence in altanno_sequences:
+                pathogenic_count = 0
+                allele_detected_motifs = set()
                 
-                for mc_string in repeat_info['motif_counts']:
-                    # parse counts into int list (underscore-separated or single)
-                    if '_' in mc_string:
-                        try:
-                            mc_list = [int(x) for x in mc_string.split('_')]
-                        except ValueError:
-                            # fallback: skip malformed entries
-                            continue
-                    else:
-                        try:
-                            mc_list = [int(mc_string)]
-                        except ValueError:
-                            continue
-                    
-                    total_pathogenic_count = 0
-                    
-                    # If we have multiple pathogenic motifs, sum counts at positions whose mapped motif
-                    # matches any pathogenic motif. Map mc_list indices to motifs cyclically when mc_list
-                    # is longer than motifs (common for ALTANNO vectors).
-                    if pathogenic_motif_list and len(pathogenic_motif_list) > 0:
-                        if motifs:
-                            for j, count in enumerate(mc_list):
-                                if count == 0:
-                                    continue
-                                motif_idx = j % len(motifs)
-                                observed_motif = motifs[motif_idx] if motif_idx < len(motifs) else ''
-                                is_pathogenic_motif = any(
-                                    observed_motif.upper() == pm.upper() or
-                                    observed_motif.upper() in pm.upper() or
-                                    pm.upper() in observed_motif.upper()
-                                    for pm in pathogenic_motif_list
-                                )
-                                if is_pathogenic_motif:
-                                    total_pathogenic_count += count
-                        else:
-                            # No motif labels available: treat all counts as potentially pathogenic (conservative)
-                            total_pathogenic_count = sum(mc_list)
-                    
-                    # If no explicit pathogenic motif list (or previous logic didn't compute), attempt to use
-                    # reference_motif index mapping (single motif case)
-                    if total_pathogenic_count == 0:
-                        # try to find reference motif index among motifs
-                        motif_index = None
-                        if reference_motif and motifs:
-                            for i, motif in enumerate(motifs):
-                                if motif and reference_motif and motif.upper() == reference_motif.upper():
-                                    motif_index = i
-                                    break
-                            if motif_index is None:
-                                for i, motif in enumerate(motifs):
-                                    if motif and reference_motif and (reference_motif.upper() in motif.upper() or motif.upper() in reference_motif.upper()):
-                                        motif_index = i
-                                        break
-                        
-                        if motif_index is not None and motifs:
-                            # Sum counts at positions mapping to motif_index (consider cyclic mapping)
-                            for j, count in enumerate(mc_list):
-                                if (j % len(motifs)) == motif_index:
-                                    total_pathogenic_count += count
-                        else:
-                            # fallback: take sum of mc_list (conservative)
-                            total_pathogenic_count = sum(mc_list)
-                    
-                    copy_numbers.append(total_pathogenic_count)
+                for idx in idx_sequence:
+                    if idx in pathogenic_indices and idx < len(motifs):
+                        pathogenic_count += 1
+                        allele_detected_motifs.add(motifs[idx])
                 
-                return copy_numbers
-                
-            except (ValueError, IndexError) as e:
-                logger.warning(f"Error parsing MC field {repeat_info.get('motif_counts')}: {e}")
+                copy_numbers.append(pathogenic_count)
+                detected_motifs.append(','.join(sorted(allele_detected_motifs)))
+            
+            return copy_numbers, detected_motifs
         
-        # Secondary method: Calculate from AL or LEN_Hx
+        # Fallback: Calculate from allele lengths
         if repeat_info.get('allele_lengths'):
             reference_motif = disease_locus.get('reference_motif_reference_orientation', '')
+            pathogenic_motif = disease_locus.get('pathogenic_motif_reference_orientation', '')
             motif_length = len(reference_motif) if reference_motif else 1
             
             for al in repeat_info['allele_lengths']:
                 try:
                     copy_number = int(al) // motif_length
                     copy_numbers.append(copy_number)
+                    # Use pathogenic motif if available, otherwise reference motif
+                    detected_motifs.append(pathogenic_motif if pathogenic_motif else reference_motif)
                 except Exception:
                     pass
             
-            return copy_numbers
+            return copy_numbers, detected_motifs
         
-        return []
+        return [], []
     
-    def _is_pathogenic(self, repeat_info: Dict, disease_locus: pd.Series) -> Tuple[bool, List[int]]:
-        """Determine if any alleles are pathogenic."""
+    def _is_pathogenic(self, repeat_info: Dict, disease_locus: pd.Series) -> Tuple[bool, List[int], List[str]]:
+        """Determine if any alleles are pathogenic.
+        
+        Returns:
+            Tuple of (is_pathogenic, pathogenic_allele_counts, detected_motifs)
+        """
         try:
             pathogenic_min = disease_locus['pathogenic_min']
             
             if pd.isna(pathogenic_min) or pathogenic_min == 'None':
-                return False, []
+                return False, [], []
             
             threshold = int(pathogenic_min)
-            copy_numbers = self._calculate_copy_numbers(repeat_info, disease_locus)
+            copy_numbers, detected_motifs = self._calculate_copy_numbers(repeat_info, disease_locus)
             
             if not copy_numbers:
-                return False, []
+                return False, [], []
             
-            pathogenic_alleles = [cn for cn in copy_numbers if cn >= threshold]
-            return len(pathogenic_alleles) > 0, pathogenic_alleles
+            pathogenic_alleles = []
+            pathogenic_motifs = []
+            for i, cn in enumerate(copy_numbers):
+                if cn >= threshold:
+                    pathogenic_alleles.append(cn)
+                    if i < len(detected_motifs):
+                        pathogenic_motifs.append(detected_motifs[i])
+            
+            return len(pathogenic_alleles) > 0, pathogenic_alleles, pathogenic_motifs
             
         except (ValueError, TypeError) as e:
             logger.warning(f"Error determining pathogenicity: {e}")
-            return False, []
-    
-    def _extract_sample_name(self, file_path: str) -> str:
-        """Extract sample name from file path. keeps base sample (before underscore)."""
-        file_name = Path(file_path).stem
-        if file_name.endswith('.vcf'):
-            file_name = file_name[:-4]
-        return file_name.split('_')[0]
+            return False, [], []
     
     def _open_file(self, file_path: str):
         """Open file, handling compressed and uncompressed formats."""
@@ -302,12 +271,11 @@ class TRGTPathogenicDetector:
             return open(file_path, 'r', encoding='utf-8')
     
     def process_vcf_files(self, vcf_files: List[str], output_file: str):
-        """Process one or more VCF files (e.g. two per sample) and output pathogenic findings to TSV."""
+        """Process one or more VCF files and output pathogenic findings to TSV."""
         pathogenic_results = []
         
         for vcf_file in vcf_files:
-            sample_name = self._extract_sample_name(vcf_file)
-            logger.info(f"Processing VCF file: {vcf_file} (Sample: {sample_name})")
+            logger.info(f"Processing VCF file: {vcf_file}")
             
             try:
                 with self._open_file(vcf_file) as f:
@@ -324,54 +292,46 @@ class TRGTPathogenicDetector:
                         if gene_name in self.skipped_genes:
                             continue
                         
-                        # Extract repeat info, prefer INFO fields (ALTANNO_H1/H2, RU, LEN_Hx), fallback to sample FORMAT
+                        # Extract repeat info
                         repeat_info = self._extract_repeat_info(vcf_record)
                         
-                        if repeat_info['allele_lengths'] or repeat_info['motif_counts']:
-                            is_pathogenic, pathogenic_alleles = self._is_pathogenic(repeat_info, disease_locus)
+                        if repeat_info['allele_lengths'] or repeat_info['altanno_sequences']:
+                            is_pathogenic, pathogenic_alleles, pathogenic_motifs = self._is_pathogenic(repeat_info, disease_locus)
                             
                             if is_pathogenic:
-                                copy_numbers = self._calculate_copy_numbers(repeat_info, disease_locus)
+                                locus = f"{disease_locus['chrom']}:{int(disease_locus['start'])}-{int(disease_locus['stop'])}"
                                 
-                                result = {
-                                    'chromosome': vcf_record['chrom'],
-                                    'position': vcf_record['pos'],
-                                    'gene': disease_locus['gene'],
-                                    'disease': disease_locus['disease'],
-                                    'inheritance': disease_locus['inheritance'],
-                                    'reference_motif': disease_locus['reference_motif_reference_orientation'],
-                                    'observed_motifs': ','.join(repeat_info['motifs']),
-                                    'pathogenic_threshold': disease_locus['pathogenic_min'],
-                                    'allele_lengths_bp': ','.join(map(str, repeat_info['allele_lengths'])),
-                                    'calculated_copy_numbers': ','.join(map(str, copy_numbers)),
-                                    'filter': vcf_record['filter']
-                                }
-                                
-                                pathogenic_results.append(result)
-                                
-                                logger.info(f"PATHOGENIC: {gene_name} ({disease_locus['disease']}) - "
-                                          f"Copy numbers: {pathogenic_alleles} (threshold: {disease_locus['pathogenic_min']})")
+                                for i, cn in enumerate(pathogenic_alleles):
+                                    detected_motif = pathogenic_motifs[i] if i < len(pathogenic_motifs) else ''
+                                    
+                                    result = {
+                                        'locus': locus,
+                                        'gene': disease_locus['gene'],
+                                        'inheritance': disease_locus['inheritance'],
+                                        'condition': disease_locus['disease'],
+                                        'motif': detected_motif,
+                                        'count': int(cn),
+                                        'threshold': int(disease_locus['pathogenic_min'])
+                                    }
+                                    pathogenic_results.append(result)
+
+                                logger.info(f"PATHOGENIC: {gene_name} ({disease_locus['disease']}) - Count: {pathogenic_alleles} - Motifs: {pathogenic_motifs} (threshold: {disease_locus['pathogenic_min']})")
             except FileNotFoundError:
                 logger.error(f"VCF file not found: {vcf_file}")
             except Exception as e:
                 logger.error(f"Error processing VCF file {vcf_file}: {e}")
         
-        # Write results to TSV (single combined output)
-        if pathogenic_results:
-            df = pd.DataFrame(pathogenic_results)
-            df.to_csv(output_file, sep='\t', index=False)
+        # Write results to TSV
+        columns = ['locus', 'gene', 'inheritance', 'condition', 'motif', 'count', 'threshold']
+        df = pd.DataFrame(pathogenic_results, columns=columns)
+        df.to_csv(output_file, sep='\t', index=False)
+        
+        if len(pathogenic_results) > 0:
             logger.info(f"Found {len(pathogenic_results)} pathogenic alleles")
-            logger.info(f"Results written to: {output_file}")
         else:
-            # Create empty file with headers
-            columns = ['sample', 'vcf_file', 'chromosome', 'position', 'gene', 'disease', 'inheritance',
-                      'reference_motif', 'pathogenic_threshold', 'observed_motifs', 
-                      'allele_lengths_bp', 'calculated_copy_numbers', 'pathogenic_alleles',
-                      'vcf_id', 'quality', 'filter']
-            df = pd.DataFrame(columns=columns)
-            df.to_csv(output_file, sep='\t', index=False)
             logger.info("No pathogenic alleles found")
-            logger.info(f"Empty results file created: {output_file}")
+        
+        logger.info(f"Results written to: {output_file}")
 
 def main():
     # New usage: at least 3 args: disease_loci.tsv, one-or-more vcf files, output.tsv

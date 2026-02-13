@@ -225,8 +225,8 @@ def write_bed_file(results, output_file):
         f.write("# name format: SAMPLE_ID|MOTIF|COUNT\n")
         
         for result in results:
-            # BED uses 0-based coordinates, VCF uses 1-based
-            start = result['POS'] - 1
+            
+            start = result['POS']  # Keep as 1-based or adjust based on your needs
             end = result['END']
             name = f"{result['SAMPLE_ID']}|{result['LONGEST_MOTIF']}|{result['REPEAT_COUNT']}"
             

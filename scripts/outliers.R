@@ -58,7 +58,7 @@ outliers <- data_final %>%
   dplyr::mutate(diff = as.numeric(count) - per99) %>%
   dplyr::filter((as.numeric(count) > per99) & diff >= 1) %>%
   dplyr::arrange(dplyr::desc(diff)) %>%
-  dplyr::group_by(locus, sample, hp, motif, count, gene, type, n_alleles, mean_lps, sd_lps, range_lps, per99, OMIM, phenotype, diff) %>%
+  dplyr::group_by(locus, sample, hp, motif, count, gene, feature, n_alleles, mean_lps, sd_lps, range_lps, per99, OMIM, phenotype, diff) %>%
   dplyr::distinct() %>%
   dplyr::ungroup()
 

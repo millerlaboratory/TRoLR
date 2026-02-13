@@ -7,16 +7,89 @@
 #
 set -euo pipefail
 
+# Performance tracking
+SCRIPT_START_TIME=$(date +%s)
+SCRIPT_START_DATE=$(date)
+PERF_LOG_FILE=""
+MAX_PEAK_MEMORY_KB=0  # Track maximum peak memory across all runs
+
+# Function to get current memory usage in MB
+get_memory_mb() {
+  if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+    # Linux: use /proc/self/status
+    awk '/VmRSS/ {print int($2/1024)}' /proc/self/status 2>/dev/null || echo "0"
+  elif [[ "$OSTYPE" == "darwin"* ]]; then
+    # macOS: use ps
+    ps -o rss= -p $$ 2>/dev/null | awk '{print int($1/1024)}' || echo "0"
+  else
+    echo "0"
+  fi
+}
+
+# Function to log timing checkpoint
+log_checkpoint() {
+  local stage_name="$1"
+  local peak_mem_kb="${2:-}"  # Optional peak memory in KB from /usr/bin/time
+  local current_time=$(date +%s)
+  local elapsed=$((current_time - SCRIPT_START_TIME))
+  
+  if [[ -n "$peak_mem_kb" ]]; then
+    # Update global max peak memory if this is higher
+    if (( peak_mem_kb > MAX_PEAK_MEMORY_KB )); then
+      MAX_PEAK_MEMORY_KB=$peak_mem_kb
+    fi
+    # Convert KB to MB
+    local mem_mb=$((peak_mem_kb / 1024))
+    echo "CHECKPOINT: $stage_name | Elapsed: ${elapsed}s | Memory: ${mem_mb}MB" | tee -a "$PERF_LOG_FILE"
+  else
+    # Fallback to current memory
+    local mem_mb=$(get_memory_mb)
+    echo "CHECKPOINT: $stage_name | Elapsed: ${elapsed}s | Memory: ${mem_mb}MB" | tee -a "$PERF_LOG_FILE"
+  fi
+}
+
+# Function to run command with /usr/bin/time wrapper for resource tracking
+run_with_timing() {
+  local stage_name="$1"
+  shift
+  local cmd=("$@")
+
+  # Write status to log file and stderr (not stdout)
+  {
+    echo ">>> Running: $stage_name"
+    echo "CHECKPOINT: $stage_name (started) | $(date)"
+  } | tee -a "$PERF_LOG_FILE" >&2
+
+  # Run command: only stdout from the command itself (not the status messages)
+  local peak_mem_kb=""
+  if command -v /usr/bin/time &> /dev/null; then
+    local time_file=$(mktemp)
+    /usr/bin/time -f "Time: %Es | Peak Memory: %MKB | CPU: %P" "${cmd[@]}" 2>"$time_file"
+    local time_output=$(cat "$time_file")
+    echo "  $time_output" >> "$PERF_LOG_FILE"
+    # Parse peak memory from time output (extract number after "Peak Memory: ")
+    peak_mem_kb=$(echo "$time_output" | grep -oP 'Peak Memory: \K\d+' || echo "")
+    rm -f "$time_file"
+  else
+    # Fallback: just run the command
+    "${cmd[@]}" 2>>"$PERF_LOG_FILE"
+  fi
+
+  # Write completion status to log and stderr with parsed peak memory
+  log_checkpoint "$stage_name (completed)" "$peak_mem_kb" >&2
+}
+
 
 if [[ $# -lt 3 ]]; then
   echo "Usage: $0 <BAM_HP1> <BAM_HP2> <KARYOTYPE: XX|XY> [OUTPUT_DIR]"
   exit 1
 fi
 
-BAM1=$1
-BAM2=$2
-KARYOTYPE=${3:-XX}
-OUTPUT_DIR=${4:-$(pwd)}
+SAMPLE_ID=$1
+BAM1=$2
+BAM2=$3
+KARYOTYPE=${4:-XX}
+OUTPUT_DIR=${5:-$(pwd)}
 
 if [[ ! -f "$BAM1" ]]; then echo "BAM not found: $BAM1"; exit 1; fi
 if [[ ! -f "$BAM2" ]]; then echo "BAM not found: $BAM2"; exit 1; fi
@@ -27,12 +100,14 @@ REPO_ROOT=${REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}
 
 # Resources - relative to repo root
 MOTIFS="$REPO_ROOT/reference_data/vamos.motif.hg38.v2.1.e0.1.noSTRCHIVE.nohp.bed"
-STRCHIVE="$REPO_ROOT/reference_data/vamos_strchive.B2FLLAIV.20250520.bed"
+STRCHIVE="$REPO_ROOT/reference_data/STRchive-disease-vamos-20260121.bed"
 LPS="$REPO_ROOT/scripts/vamos_lps.py"
-ANNO="$REPO_ROOT/reference_data/GENCODE_v.45_CANONICAL.bed"
-STRCHIVE_INFO="$REPO_ROOT/reference_data/STRchive-disease-loci-v2.4.3.hg38.CE2vK2zA.tsv"
+ANNO="$REPO_ROOT/reference_data/TR_GENCODE_v.45_ANNOTATION.bed"
+STRCHIVE_INFO="$REPO_ROOT/reference_data/STRchive-disease-loci.hg38.general.20260121.tsv"
 PATHOGENIC_DETECTOR="$REPO_ROOT/scripts/strchive_pathogenic_detector.py"
 TEST_OUTLIERS_R="$REPO_ROOT/scripts/outliers.R"
+
+#Update with final file paths later
 CONTROL_FILE="$REPO_ROOT/reference_data/vamos_asm_lps_e0.1_247_catalog_control_length_counts.tsv.gz"
 REF_FILE="$REPO_ROOT/reference_data/vamos_asm_lps_control_summary.tsv.gz"
 
@@ -44,30 +119,35 @@ REF_FILE="$REPO_ROOT/reference_data/vamos_asm_lps_control_summary.tsv.gz"
 #mkdir -p "$OUTPUT_DIR"
 cd "$OUTPUT_DIR"
 
-# derive sample base name (strip _hp1/_hp2 or _hap1/_hap2)
-base1=$(basename "$BAM1" .hg38.bam)
-base2=$(basename "$BAM2" .hg38.bam)
-sample1=$(echo "$base1" | cut -d"_" -f1)
-sample2=$(echo "$base2" | cut -d"_" -f1)
 
-if [[ "$sample1" != "$sample2" ]]; then
-  echo "Sample base names do not match: $sample1 vs $sample2"
-  exit 1
-fi
-sample="$sample1"
-sample_dir="${OUTPUT_DIR}/${sample}"
+sample_dir="${OUTPUT_DIR}/${SAMPLE_ID}"
 mkdir -p "$sample_dir"
 
-echo "Running TRoLR for sample: $sample (karyotype=$KARYOTYPE)"
+# Initialize performance log file
+PERF_LOG_FILE="${sample_dir}/${SAMPLE_ID}_performance.log"
+{
+  echo "======================================"
+  echo "TRoLR Performance Monitoring Log"
+  echo "======================================"
+  echo "Sample: $SAMPLE_ID"
+  echo "Karyotype: $KARYOTYPE"
+  echo "Start Time: $SCRIPT_START_DATE"
+  echo "Start Timestamp: $SCRIPT_START_TIME"
+  echo "======================================" 
+} > "$PERF_LOG_FILE"
+
+log_checkpoint "Script initialization"
+
+echo "Running TRoLR for sample: $SAMPLE_ID (karyotype=$KARYOTYPE)"
 echo "BAMs: $BAM1 , $BAM2"
 
 # Map bam -> hap number by checking filename suffixes; fallback to 1/2 ordering
 declare -A BAM_MAP
 for b in "$BAM1" "$BAM2"; do
   bn=$(basename "$b" .bam)
-  if echo "$bn" | grep -qE 'hp1|hap1'; then
+  if echo "$bn" | grep -qE 'hp1|hap1|mat'; then
     BAM_MAP[1]="$b"
-  elif echo "$bn" | grep -qE 'hp2|hap2'; then
+  elif echo "$bn" | grep -qE 'hp2|hap2|pat'; then
     BAM_MAP[2]="$b"
   fi
 done
@@ -75,57 +155,72 @@ done
 if [[ -z "${BAM_MAP[1]:-}" ]]; then BAM_MAP[1]="$BAM1"; fi
 if [[ -z "${BAM_MAP[2]:-}" ]]; then BAM_MAP[2]="$BAM2"; fi
 
+#unzip motif file
+gunzip "$REPO_ROOT/reference_data/vamos.motif.hg38.v2.1.e0.1.noSTRCHIVE.nohp.bed.gz"
+
+
 # run vamos for each hap (skip if outputs exist)
 for hap in 1 2; do
   bam="${BAM_MAP[$hap]}"
-  vcf_plain="${sample_dir}/${sample}_hp${hap}.vcf"
+  vcf_plain="${sample_dir}/${SAMPLE_ID}_hp${hap}.vcf"
   vcf_gz="${vcf_plain}.gz"
-  strchive_plain="${sample_dir}/${sample}_hp${hap}.strchive.vcf"
+  strchive_plain="${sample_dir}/${SAMPLE_ID}_hp${hap}.strchive.vcf"
   #strchive_gz="${strchive_plain}.gz"
 
   if [[ ! -f "$vcf_gz" && ! -f "$vcf_plain" ]]; then
     echo "Running vamos motifs on hap${hap}"
-    vamos --contig -b "$bam" -r "$MOTIFS" -s "${sample}_hp${hap}" -S -o "$vcf_plain" -t 20 || true
+    run_with_timing "VAMOS motifs hap${hap}" vamos --contig -b "$bam" -r "$MOTIFS" -s "${SAMPLE_ID}_hp${hap}" -S -o "$vcf_plain" -t 20 || true
     if [[ -f "$vcf_plain" ]]; then bgzip -f "$vcf_plain"; fi
   else
-    echo "VCF exists for ${sample}_hp${hap}, skipping motifs call"
+    echo "VCF exists for ${SAMPLE_ID}_hp${hap}, skipping motifs call"
+    log_checkpoint "VCF skipped for hap${hap} (already exists)"
   fi
 
   if [[ ! -f "$strchive_plain" ]]; then
     echo "Running vamos STRchive on hap${hap}"
-    vamos --contig -b "$bam" -r "$STRCHIVE" -s "${sample}_hp${hap}" -S -o "$strchive_plain" -t 20 || true
+    run_with_timing "VAMOS STRchive hap${hap}" vamos --contig -b "$bam" -r "$STRCHIVE" -s "${SAMPLE_ID}_hp${hap}" -S -o "$strchive_plain" -t 20 || true
   else
-    echo "STRchive VCF exists for ${sample}_hp${hap}, skipping"
+    echo "STRchive VCF exists for ${SAMPLE_ID}_hp${hap}, skipping"
+    log_checkpoint "STRchive VCF skipped for hap${hap} (already exists)"
   fi
 done
+
+#re-compress motif file
+bgzip "$MOTIFS"
 
 #source deactivate vamos-env || true
 
 # Run vamos_lps.py to produce LPS bed using non-strchive vcfs (*.vcf.gz)
-lps_bed="${sample_dir}/${sample}_lps.bed"
+lps_bed="${sample_dir}/${SAMPLE_ID}_lps.bed"
 if [[ ! -f "$lps_bed" ]]; then
-  python "$LPS" -d "$sample_dir" -o "$lps_bed" -p "*.vcf.gz"
+  run_with_timing "LPS bed generation" python "$LPS" -d "$sample_dir" -o "$lps_bed" -p "*.vcf.gz"
+else
+  log_checkpoint "LPS bed skipped (already exists)"
 fi
 
 # Annotate with gene annotations
-annotated_bed="${sample_dir}/${sample}_lps_annotated.bed"
+annotated_bed="${sample_dir}/${SAMPLE_ID}_lps_annotated.bed"
 if [[ ! -f "$annotated_bed" ]]; then
-  bedtools intersect -wa -loj -a "$lps_bed" -b "$ANNO" > "$annotated_bed"
+  run_with_timing "Gene annotation" bedtools intersect -wa -loj -a "$lps_bed" -b "$ANNO" > "$annotated_bed"
+else
+  log_checkpoint "Gene annotation skipped (already exists)"
 fi
 
 # Run test_outliers.R to produce outliers table (passes karyotype)
-outliers_file="${sample_dir}/${sample}_lps_annotated_outliers.bed"
+outliers_file="${sample_dir}/${SAMPLE_ID}_lps_annotated_outliers.bed"
 if [[ ! -f "$outliers_file" ]]; then
-  Rscript "$TEST_OUTLIERS_R" "$annotated_bed" "$outliers_file" "$KARYOTYPE" "$REF_FILE"
+  run_with_timing "Outlier detection (R)" Rscript "$TEST_OUTLIERS_R" "$annotated_bed" "$outliers_file" "$KARYOTYPE" "$REF_FILE"
+else
+  log_checkpoint "Outlier detection skipped (already exists)"
 fi
 
 # Run pathogenic detector on strchive vcfs if available
-pathogenic_file="${sample_dir}/${sample}_pathogenic_results.tsv"
-hp1_vcf="${sample_dir}/${sample}_hp1.strchive.vcf.gz"
-hp2_vcf="${sample_dir}/${sample}_hp2.strchive.vcf.gz"
+pathogenic_file="${sample_dir}/${SAMPLE_ID}_pathogenic_results.tsv"
+hp1_vcf="${sample_dir}/${SAMPLE_ID}_hp1.strchive.vcf.gz"
+hp2_vcf="${sample_dir}/${SAMPLE_ID}_hp2.strchive.vcf.gz"
 # fall back to plain strchive names if different extension
-hp1_vcf_alt="${sample_dir}/${sample}_hp1.strchive.vcf"
-hp2_vcf_alt="${sample_dir}/${sample}_hp2.strchive.vcf"
+hp1_vcf_alt="${sample_dir}/${SAMPLE_ID}_hp1.strchive.vcf"
+hp2_vcf_alt="${sample_dir}/${SAMPLE_ID}_hp2.strchive.vcf"
 
 vcf1=""
 vcf2=""
@@ -133,7 +228,11 @@ if [[ -f "$hp1_vcf" ]]; then vcf1="$hp1_vcf"; elif [[ -f "$hp1_vcf_alt" ]]; then
 if [[ -f "$hp2_vcf" ]]; then vcf2="$hp2_vcf"; elif [[ -f "$hp2_vcf_alt" ]]; then vcf2="$hp2_vcf_alt"; fi
 
 if [[ -n "$vcf1" && -n "$vcf2" && ! -f "$pathogenic_file" ]]; then
-  python "$PATHOGENIC_DETECTOR" "$STRCHIVE_INFO" "$vcf1" "$vcf2" "$pathogenic_file"
+  run_with_timing "Pathogenic detection" python "$PATHOGENIC_DETECTOR" "$STRCHIVE_INFO" "$vcf1" "$vcf2" "$pathogenic_file"
+elif [[ ! -n "$vcf1" || ! -n "$vcf2" ]]; then
+  echo "STRchive VCFs not available, skipping pathogenic detection" | tee -a "$PERF_LOG_FILE"
+else
+  log_checkpoint "Pathogenic detection skipped (already exists)"
 fi
 
 # Generate histogram plots for exon/UTR/intron outliers (motif_len >= 3)
@@ -142,6 +241,7 @@ plots_dir="${sample_dir}/plots"
 
 if [[ -d "$plots_dir" ]] && [[ $(find "$plots_dir" -name "*.png" 2>/dev/null | wc -l) -gt 0 ]]; then
   echo "Plots directory exists with PNG files, skipping plot generation"
+  log_checkpoint "Plot generation skipped (already exists)"
 else
   echo "Generating histogram plots..."
   mkdir -p "$plots_dir"
@@ -183,19 +283,19 @@ out$count <- suppressWarnings(as.numeric(out$count))
 out$motif_len <- nchar(out$motif)
 
 # Build type classification if not present
-if(!("type" %in% colnames(out))) {
+if(!("feature" %in% colnames(out))) {
   # Try to infer from other columns
   char_cols <- names(out)[sapply(out, is.character)]
   if(length(char_cols) > 0) {
-    type_text <- apply(out[, char_cols, drop=FALSE], 1, function(r) paste(na.omit(r), collapse=" "))
-    out$type <- case_when(
-      grepl("exon", type_text, ignore.case = TRUE) ~ "exon",
-      grepl("UTR", type_text, ignore.case = TRUE) ~ "UTR",
-      grepl("intron", type_text, ignore.case = TRUE) ~ "intron",
+    feature_text <- apply(out[, char_cols, drop=FALSE], 1, function(r) paste(na.omit(r), collapse=" "))
+    out$feature <- case_when(
+      grepl("exon", feature_text, ignore.case = TRUE) ~ "exon",
+      grepl("UTR", feature_text, ignore.case = TRUE) ~ "UTR",
+      grepl("intron", feature_text, ignore.case = TRUE) ~ "intron",
       TRUE ~ "other"
     )
   } else {
-    message("Warning: Cannot determine type column, skipping plot generation")
+    message("Warning: Cannot determine feature column, skipping plot generation")
     quit(status=0)
   }
 }
@@ -204,8 +304,8 @@ if(!("type" %in% colnames(out))) {
 out_filt <- out %>%
   filter(!is.na(motif_len) & motif_len >= 3) %>%
   filter(
-    (tolower(type) %in% c("exon", "utr")) |
-    (tolower(type) == "intron" & !is.na(count) & count >= 100)
+    (tolower(feature) %in% c("exon", "utr")) |
+    (tolower(feature) == "intron" & !is.na(count) & count >= 100)
   )
 
 if(nrow(out_filt) == 0) {
@@ -231,23 +331,23 @@ ctrl$count <- suppressWarnings(as.numeric(ctrl$count))
 
 if(!dir.exists(plots_dir)) dir.create(plots_dir, recursive=TRUE)
 
-out_pairs <- out_filt %>% select(locus, motif, type, gene) %>% distinct()
+out_pairs <- out_filt %>% select(locus, motif, feature, gene) %>% distinct()
 
 for(i in seq_len(nrow(out_pairs))) {
   locus_i <- out_pairs$locus[i]
   motif_i <- out_pairs$motif[i]
-  type_i  <- out_pairs$type[i]
+  feature_i  <- out_pairs$feature[i]
   gene_i <- out_pairs$gene[i]
   sample_count <- max(out_filt$count[out_filt$locus == locus_i & out_filt$motif == motif_i], na.rm=TRUE)
   if(is.infinite(sample_count)) sample_count <- NA_real_
 
-  ctrl_sub <- ctrl %>% filter(locus == locus_i & motif == motif_i & type == type_i, gene == gene_i)
+  ctrl_sub <- ctrl %>% filter(locus == locus_i & motif == motif_i & feature == feature_i, gene == gene_i)
   if(nrow(ctrl_sub) == 0) next
 
   p <- ggplot(ctrl_sub, aes(x = count, y=n_alleles)) +
     geom_bar(stat="identity",fill = "#48379E", color = "black", alpha = 0.8) +
     theme_classic() +
-    labs(title = paste0(type_i, " outlier: ", locus_i, " (", motif_i, ")"),
+    labs(title = paste0(feature_i, " outlier: ", locus_i, " (", motif_i, ")"),
          subtitle = paste0("Sample: ", sample_name, " — sample count: ", ifelse(is.na(sample_count), "NA", sample_count)),
          x = "Copy number (count)", y = "Frequency")
   if(!is.na(sample_count)) p <- p + geom_vline(xintercept = sample_count, color = "red", linetype = "dashed", linewidth = 0.8)
@@ -257,7 +357,7 @@ for(i in seq_len(nrow(out_pairs))) {
   motif_hash <- substr(digest(motif_i, algo="sha1"), 1, 8)
   short_locus <- gsub("[^A-Za-z0-9]", "_", substr(locus_i, 1, 30))
   short_motif <- gsub("[^A-Za-z0-9]", "_", substr(motif_i, 1, 20))
-  out_fn <- file.path(plots_dir, paste0(sample_name, "_", type_i, "_", short_locus, "_", locus_hash, "_", short_motif, "_", motif_hash, "_histogram.png"))
+  out_fn <- file.path(plots_dir, paste0(sample_name, "_", feature_i, "_", short_locus, "_", locus_hash, "_", short_motif, "_", motif_hash, "_histogram.png"))
 
   # Skip regenerating if the file already exists
   if (file.exists(out_fn)) {
@@ -272,13 +372,13 @@ message("Plot generation complete")
 R_PLOT
 
   # run plot maker
-  Rscript "$temp_r_plot" "$outliers_file" "$CONTROL_FILE" "$sample" "$plots_dir" || echo "Plot generation failed or skipped"
+  run_with_timing "Histogram plot generation" Rscript "$temp_r_plot" "$outliers_file" "$CONTROL_FILE" "$SAMPLE_ID" "$plots_dir" || echo "Plot generation failed or skipped"
   rm -f "$temp_r_plot"
 fi
 
 # R Markdown report generation with integrated plot display
-report_rmd="${sample_dir}/${sample}_outlier_report.Rmd"
-report_html="${sample_dir}/${sample}_outlier_report.html"
+report_rmd="${sample_dir}/${SAMPLE_ID}_outlier_report.Rmd"
+report_html="${sample_dir}/${SAMPLE_ID}_outlier_report.html"
 
 cat > "$report_rmd" <<'RMD'
 ---
@@ -297,21 +397,24 @@ library(knitr)
 library(dplyr)
 library(DT)
 library(htmltools)
+library(ggplot2)
+library(digest)
 knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
 outliers_path <- Sys.getenv("OUTLIERS_PATH")
 pathogenic_path <- Sys.getenv("PATHOGENIC_PATH")
 sample_name <- Sys.getenv("SAMPLE_NAME")
 plots_dir_path <- Sys.getenv("PLOTS_DIR")
+control_file <- Sys.getenv("CONTROL_FILE")
 
-# Function to find and display plots for a specific type
-display_plots_for_type <- function(type_name, plot_files) {
-  # Find plots matching this type
-  type_plots <- plot_files[grepl(paste0("_", type_name, "_"), plot_files, ignore.case = TRUE)]
+# Function to find and display plots for a specific feature
+display_plots_for_feature <- function(feature_name, plot_files) {
+  # Find plots matching this feature
+  feature_plots <- plot_files[grepl(paste0("_", feature_name, "_"), plot_files, ignore.case = TRUE)]
   
-  if(length(type_plots) > 0) {
+  if(length(feature_plots) > 0) {
     cat("\n\n#### Distribution plots\n\n")
     cat("Control population distributions with sample value (red dashed line):\n\n")
-    for(plot_file in type_plots) {
+    for(plot_file in feature_plots) {
       # Display plot without filename
       cat(sprintf("![](%s){width=85%%}\n\n", plot_file))
     }
@@ -332,10 +435,10 @@ if(file.exists(outliers_path)){
     # Build type classification
     char_cols <- names(out)[sapply(out, is.character)]
     if(length(char_cols) > 0){
-      type_text <- apply(out[, char_cols, drop=FALSE], 1, function(r) paste(na.omit(r), collapse=" "))
-      is_exon   <- grepl("exon", type_text, ignore.case = TRUE, perl = TRUE)
-      is_utr    <- grepl("UTR", type_text, ignore.case = TRUE, perl = TRUE)
-      is_intron <- grepl("intron", type_text, ignore.case = TRUE, perl = TRUE)
+      feature_text <- apply(out[, char_cols, drop=FALSE], 1, function(r) paste(na.omit(r), collapse=" "))
+      is_exon   <- grepl("exon", feature_text, ignore.case = TRUE, perl = TRUE)
+      is_utr    <- grepl("UTR", feature_text, ignore.case = TRUE, perl = TRUE)
+      is_intron <- grepl("intron", feature_text, ignore.case = TRUE, perl = TRUE)
     } else {
       is_exon <- is_utr <- is_intron <- rep(FALSE, nrow(out))
     }
@@ -350,9 +453,18 @@ if(file.exists(outliers_path)){
     intron_low <- sum(!is_exon & !is_utr & is_intron & (is.na(out$count) | out$count < 100) & long_mask)
     other_count <- sum(!is_exon & !is_utr & !is_intron & long_mask)
     
+    # Count pathogenic calls if available
+    pathogenic_count <- 0
+    if(nzchar(pathogenic_path) && file.exists(pathogenic_path)){
+      pat_temp <- tryCatch(read.delim(pathogenic_path, header=TRUE, sep="\t", stringsAsFactors=FALSE), error=function(e) NULL)
+      if(!is.null(pat_temp) && nrow(pat_temp) > 0){
+        pathogenic_count <- nrow(pat_temp)
+      }
+    }
+    
     summary_df <- data.frame(
-      Type = c("Exon", "UTR", "Intron (count ≥ 100)", "Intron (count < 100)", "Other/Unclassified", "Short motifs (<3 bp)"),
-      Count = c(exon_count, utr_count, intron_high, intron_low, other_count, short_count)
+      Type = c("Exon", "UTR", "Intron (count ≥ 100)", "Intron (count < 100)", "Other/Unclassified", "Short motifs (<3 bp)", "Pathogenic calls"),
+      Count = c(exon_count, utr_count, intron_high, intron_low, other_count, short_count, pathogenic_count)
     )
     
     cat("**Outlier type summary:**\n\n")
@@ -370,16 +482,83 @@ if(file.exists(outliers_path)){
 
 ## Pathogenic calls
 
-```{r pathogenic, results='asis'}
+```{r pathogenic-table, results='asis'}
 if(nzchar(pathogenic_path) && file.exists(pathogenic_path)){
   pat <- read.delim(pathogenic_path, header=TRUE, sep="\t", stringsAsFactors=FALSE)
   if(nrow(pat)>0){
+    cat("**Number of pathogenic calls:** ", nrow(pat), "\n\n")
     DT::datatable(pat, options=list(pageLength=25, scrollX=TRUE))
   } else {
     cat("No pathogenic calls found.\n")
   }
 } else {
   cat("Pathogenic results not available.\n")
+}
+```
+
+```{r pathogenic-plots, results='asis'}
+# Generate plots for pathogenic calls using control data
+if(nzchar(pathogenic_path) && file.exists(pathogenic_path) && file.exists(control_file)){
+  pat <- read.delim(pathogenic_path, header=TRUE, sep="\t", stringsAsFactors=FALSE)
+  ctrl_all <- tryCatch(read.delim(control_file, header=TRUE, sep="\t", stringsAsFactors=FALSE), error=function(e) NULL)
+  
+  if(!is.null(ctrl_all) && nrow(ctrl_all) > 0 && nrow(pat) > 0){
+    # Ensure necessary columns
+    if(all(c("locus","motif","count") %in% colnames(ctrl_all))){
+      ctrl_all$motif <- as.character(ctrl_all$motif)
+      ctrl_all$count <- suppressWarnings(as.numeric(ctrl_all$count))
+      
+      # Check if n_alleles exists; if not, create it from row frequencies
+      if(!("n_alleles" %in% colnames(ctrl_all))){
+        ctrl_all <- ctrl_all %>% group_by(locus, motif, count) %>% mutate(n_alleles = n()) %>% ungroup()
+      } else {
+        ctrl_all$n_alleles <- suppressWarnings(as.numeric(ctrl_all$n_alleles))
+      }
+      
+      cat("\n### Population distributions for pathogenic calls\n\n")
+      cat("Control population distributions with sample value (red dashed line):\n\n")
+      
+      for(i in seq_len(nrow(pat))){
+        locus_i <- pat$locus[i]
+        motif_i <- as.character(pat$motif[i])
+        sample_count <- suppressWarnings(as.numeric(pat$count[i]))
+        gene_i <- pat$gene[i]
+        
+        # Match control data for this locus and motif
+        ctrl_sub <- ctrl_all %>% 
+          filter(locus == locus_i & motif == motif_i) %>%
+          distinct()
+        
+        if(nrow(ctrl_sub) > 0){
+          p <- ggplot(ctrl_sub, aes(x = count, y = n_alleles)) +
+            geom_bar(stat="identity", fill = "#48379E", color = "black", alpha = 0.8) +
+            theme_classic() +
+            labs(title = paste0("Pathogenic: ", locus_i),
+                 subtitle = paste0("Gene: ", gene_i, " | Motif: ", motif_i, " | Sample: ", sample_name),
+                 x = "Copy number (count)", y = "Frequency")
+          
+          if(!is.na(sample_count)){
+            p <- p + geom_vline(xintercept = sample_count, color = "red", linetype = "dashed", linewidth = 0.8)
+          }
+          
+          # Create safe filename with hash
+          locus_hash <- substr(digest(locus_i, algo="sha1"), 1, 8)
+          motif_hash <- substr(digest(motif_i, algo="sha1"), 1, 8)
+          plot_file <- tempfile(paste0("pathogenic_", locus_hash, "_", motif_hash, "_"), fileext=".png")
+          
+          ggsave(filename = plot_file, plot = p, width = 8, height = 5, dpi = 150)
+          cat(sprintf("![](%s){width=85%%}\n\n", plot_file))
+        }
+      }
+    } else {
+      cat("Control file missing required columns (locus, motif, count).\n")
+    }
+  } else if(nzchar(pathogenic_path) && file.exists(pathogenic_path)){
+    pat <- read.delim(pathogenic_path, header=TRUE, sep="\t", stringsAsFactors=FALSE)
+    if(nrow(pat) > 0){
+      cat("No control data available for pathogenic call plots.\n")
+    }
+  }
 }
 ```
 
@@ -448,7 +627,7 @@ if(exists("exon_tab") && nrow(exon_tab) > 0){
 
 ```{r exon-outliers-plots, results='asis'}
 if(exists("exon_tab") && nrow(exon_tab) > 0 && length(plot_files) > 0) {
-  display_plots_for_type("exon", plot_files)
+  display_plots_for_feature("exon", plot_files)
 }
 ```
 
@@ -464,7 +643,7 @@ if(exists("utr_tab") && nrow(utr_tab) > 0){
 
 ```{r utr-outliers-plots, results='asis'}
 if(exists("utr_tab") && nrow(utr_tab) > 0 && length(plot_files) > 0) {
-  display_plots_for_type("UTR", plot_files)
+  display_plots_for_feature("UTR", plot_files)
 }
 ```
 
@@ -481,7 +660,7 @@ if(exists("intron_tab") && nrow(intron_tab) > 0){
 
 ```{r intron-outliers-plots, results='asis'}
 if(exists("intron_tab") && nrow(intron_tab) > 0 && length(plot_files) > 0) {
-  display_plots_for_type("intron", plot_files)
+  display_plots_for_feature("intron", plot_files)
 }
 ```
 
@@ -527,20 +706,47 @@ if(exists("short_motifs") && nrow(short_motifs) > 0){
 *Report generated on `r Sys.Date()` for sample `r sample_name`*
 RMD
 
-sed -i "s/SAMPLE_PLACEHOLDER/${sample}/g" "$report_rmd"
+sed -i "s/SAMPLE_PLACEHOLDER/${SAMPLE_ID}/g" "$report_rmd"
 export OUTLIERS_PATH="$outliers_file"
 export PATHOGENIC_PATH="${pathogenic_file:-}"
-export SAMPLE_NAME="$sample"
+export SAMPLE_NAME="$SAMPLE_ID"
 export PLOTS_DIR="$plots_dir"
+export CONTROL_FILE="$CONTROL_FILE"
 
 # render the report
 echo "Rendering HTML report..."
-Rscript -e "rmarkdown::render('$report_rmd', output_file='$report_html', quiet=TRUE)" || echo "Rmd render failed"
+run_with_timing "HTML report generation" Rscript -e "rmarkdown::render('$report_rmd', output_file='$report_html', quiet=TRUE)" || echo "Rmd render failed"
 
 # cleanup
 #conda deactivate || true
 
-echo "Pipeline complete for sample: $sample"
+# Final summary
+SCRIPT_END_TIME=$(date +%s)
+SCRIPT_END_DATE=$(date)
+TOTAL_ELAPSED=$((SCRIPT_END_TIME - SCRIPT_START_TIME))
+TOTAL_MINUTES=$((TOTAL_ELAPSED / 60))
+TOTAL_SECONDS=$((TOTAL_ELAPSED % 60))
+# Use tracked peak memory instead of current memory
+FINAL_MEMORY=$((MAX_PEAK_MEMORY_KB / 1024))
+if (( FINAL_MEMORY == 0 )); then
+  # Fallback to current memory if no peak was tracked
+  FINAL_MEMORY=$(get_memory_mb)
+fi
+
+{
+  echo ""
+  echo "======================================"
+  echo "TRoLR Pipeline Complete - Summary"
+  echo "======================================"
+  echo "Sample: $SAMPLE_ID"
+  echo "End Time: $SCRIPT_END_DATE"
+  echo "End Timestamp: $SCRIPT_END_TIME"
+  echo "Total Runtime: ${TOTAL_MINUTES}m ${TOTAL_SECONDS}s (${TOTAL_ELAPSED}s)"
+  echo "Peak Memory Usage: ${FINAL_MEMORY}MB"
+  echo "======================================"
+} | tee -a "$PERF_LOG_FILE"
+
+echo "Pipeline complete for sample: $SAMPLE_ID"
 echo "Outputs:"
 echo " - LPS: $lps_bed"
 echo " - Annotated LPS: $annotated_bed"
@@ -548,3 +754,4 @@ echo " - Outliers: $outliers_file"
 echo " - Pathogenic calls: $pathogenic_file"
 echo " - Histogram plots: $plots_dir"
 echo " - HTML report: $report_html"
+echo " - Performance log: $PERF_LOG_FILE"

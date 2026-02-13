@@ -39,10 +39,6 @@ conda activate trolr-env
 
 chmod +x TRoLR.sh
 
-#Uncompress motif file to use with vamos
-
-gunzip reference_data/vamos.motif.hg38.v2.1.e0.1.noSTRCHIVE.nohp.bed.gz
-
 ```
 
 ## Usage
@@ -53,13 +49,14 @@ gunzip reference_data/vamos.motif.hg38.v2.1.e0.1.noSTRCHIVE.nohp.bed.gz
 
 ```
 bash
-./TRoLR.sh <BAM_HP1> <BAM_HP2> <KARYOTYPE: XX|XY> [OUTPUT_DIR]
+./TRoLR.sh SAMPLE_NAME <BAM_HP1> <BAM_HP2> <KARYOTYPE: XX|XY> [OUTPUT_DIR]
 
 ```
 
 ###
  Parameters
-
+- `SAMPLE_NAME`
+: Sample name for output naming scheme
 - `BAM_HP1`
 : Path to first haplotype BAM file (hg38 aligned)
 - `BAM_HP2`
@@ -76,11 +73,11 @@ bash
 
 # Run analysis for an XX sample
 
-./TRoLR.sh sample_hp1.hg38.bam sample_hp2.hg38.bam XX ./results/
+./TRoLR.sh SAMPLE_NAME sample_hp1.hg38.bam sample_hp2.hg38.bam XX ./results/
 
 # Run analysis for an XY sample
 
-./TRoLR.sh sample_hap1.hg38.bam sample_hap2.hg38.bam XY ./results/
+./TRoLR.sh SAMPLE_NAME sample_hap1.hg38.bam sample_hap2.hg38.bam XY ./results/
 
 ```
 ## Test Sample
@@ -88,7 +85,7 @@ bash
 Using GIAB sample data from *chr9:82230983-92919503*, you can test the program by running
 
 ```
-./TRoLR.sh HG002_sample_data/HG002_asm_1.hg38.bam HG002_sample_data/HG002_asm_2.hg38.bam XY ./results/
+./TRoLR.sh HG002 HG002_sample_data/HG002_asm_1.hg38.bam HG002_sample_data/HG002_asm_2.hg38.bam XY ./results/
 ```
 
 ## Output
@@ -106,7 +103,8 @@ The pipeline generates a sample-specific directory containing:
 ├── <sample>_lps_annotated_outliers.bed  # Statistical outliers
 ├── <sample>_pathogenic_results.tsv  # Pathogenic STR calls
 ├── <sample>_outlier_report.html     # Interactive HTML report
-└── plots/                            # Distribution plots
+├── <sample>_performance.log         # Performance log
+├── plots/                            # Distribution plots
     └── *.png
 
 ```
@@ -115,9 +113,9 @@ The pipeline generates a sample-specific directory containing:
 
 ```
 vamos.motif.hg38.v2.1.e0.1.noSTRCHIVE.nohp.bed.gz                   #TR catalog
-vamos_strchive.B2FLLAIV.20250520.bed                                #STRChive Catalog
-GENCODE_v.45_CANONICAL.bed                                          #Gencode v45 annotation
-STRchive-disease-loci-v2.4.3.hg38.CE2vK2zA.tsv.                     #STRChive information including pathogenic thresholds
+STRchive-disease-vamos-20260121.bed                                 #STRChive Catalog
+TR_GENCODE_v.45_ANNOTATION.bed                                      #Gencode v45 annotation
+STRchive-disease-loci.hg38.general.20260121.tsv                     #STRChive information including pathogenic thresholds
 vamos_asm_lps_e0.1_247_catalog_control_length_counts.tsv.gz         #The count of each LPS length at each locus. For generating plots
 amos_asm_lps_control_summary.tsv.gz                                 #Summary statistics for identifing outliers
 
