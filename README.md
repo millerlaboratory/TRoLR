@@ -29,7 +29,7 @@ bash
 
 # Clone the repository
 
-git clone github.com/millerlaboratory/TRoLR/TRoLR.git
+git clone git@github.com:millerlaboratory/TRoLR.git
 cd TRoLR
 
 
