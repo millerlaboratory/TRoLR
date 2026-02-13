@@ -40,6 +40,7 @@ conda activate trolr-env
 chmod +x TRoLR.sh
 
 ```
+**TRoLR uses an older version of vamos, we will update to the newest version shortly**
 
 ## Usage
 
