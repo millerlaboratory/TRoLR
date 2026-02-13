@@ -35,7 +35,7 @@ cd TRoLR
 
 # Create conda environment
 
-conda env create -f environment.yml
+conda env create -f environment.yaml
 conda activate trolr-env
 
 chmod +x TRoLR.sh
