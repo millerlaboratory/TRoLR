@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Simple Pathogenic Allele Detection for TRGT VCF Files
+Simple Pathogenic Allele Detection for vamos VCF Files
 
 This program identifies pathogenic tandem repeat alleles in a single VCF file 
 and outputs results to a TSV file.
 
-Usage: python trgt_pathogenic_detector_simple.py <disease_loci.tsv> <sample.vcf> <output.tsv>
+Usage: python pathogenic_detector.py <disease_loci.tsv> <sample.vcf> <output.tsv>
 """
 
 import sys
@@ -19,7 +19,7 @@ import gzip
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-class TRGTPathogenicDetector:
+class PathogenicDetector:
     def __init__(self, disease_loci_file: str):
         """Initialize the detector with disease loci reference data."""
         self.disease_loci = self._load_disease_loci(disease_loci_file)
@@ -83,10 +83,8 @@ class TRGTPathogenicDetector:
         }
     
     def _extract_repeat_info(self, vcf_record: Dict, sample_idx: int = 0) -> Dict:
-        """Extract repeat information from TRGT VCF record.
+        """Extract repeat information from vamos VCF record.
 
-        This is more robust to STRchive/VAMOS-style VCFs (RU, ALTANNO_H1, ALTANNO_H2, LEN_H1, LEN_H2)
-        while still supporting TRGT-style AL/MC fields in the sample columns.
         
         For ALTANNO fields: values are INDICES into the RU (motif) list, not repeat counts.
         """
@@ -166,7 +164,7 @@ class TRGTPathogenicDetector:
         return None
     
     def _calculate_copy_numbers(self, repeat_info: Dict, disease_locus: pd.Series) -> Tuple[List[int], List[str]]:
-        """Calculate copy numbers from TRGT data and return detected pathogenic motifs.
+        """Calculate copy numbers from vamos data and return detected pathogenic motifs.
         
         For ALTANNO format: each value is an INDEX into the RU motif list.
         Count how many times pathogenic motif indices appear in the sequence.
@@ -363,7 +361,7 @@ def main():
     
     # Initialize detector and process
     try:
-        detector = TRGTPathogenicDetector(disease_loci_file)
+        detector = PathogenicDetector(disease_loci_file)
         detector.process_vcf_files(vcf_files, output_file)
         print(f"✅ Analysis complete. Results saved to: {output_file}")
     except Exception as e:
