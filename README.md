@@ -5,6 +5,8 @@ TRoLR is a comprehensive pipeline for identifying and analyzing tandem repeat ou
 
 TRoLR uses VAMOS developed by the Chaisson Lab (https://github.com/ChaissonLab/vamos, Ren et al., 2023)
 
+*TRoLR v.1 has been depricated in favor of TRComp DB v2.0 and the newest version of vamos. See releases if you would prefer to install the old version*
+
 ## Overview
 
 TRoLR processes haplotype-aware BAM files to:
@@ -132,5 +134,7 @@ Supp_LPS_MOTIF_ALLELE_COUNTS.tsv.gz                       #The count of each LPS
 DATA_FILE_5_ALL_LOCI_SUMMARY_STATS_PER_MOTIF.tsv.gz       #Summary statistics for identifing outliers
 
 ```
+## Citing TRoLR
 
+*Preprint information coming soon!*
 
