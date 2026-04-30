@@ -30,7 +30,6 @@ formatted_data <- data %>%
   dplyr::mutate(count = as.numeric(count)) %>%
   dplyr::select(locus, sample, hp, motif, count)
 
-#ref_data <- data.table::fread("/n/users/sgibson/Projects/TANDEM_REPEATS/TRoLR/reference_data/vamos_asm_lps_control_summary.tsv") #need to change this path
 
 joined <- formatted_data %>%
   dplyr::left_join(ref_data, by = c("locus", "motif"), relationship = "many-to-many")
@@ -54,13 +53,15 @@ if (karyotype == "XY") {
   data_final <- joined
 }
 
-outliers <- data_final %>%
+all_outliers <- data_final %>%
   dplyr::mutate(diff = as.numeric(count) - per99) %>%
   dplyr::filter((as.numeric(count) > per99) & diff >= 1) %>%
   dplyr::arrange(dplyr::desc(diff)) %>%
-  dplyr::group_by(locus, sample, hp, motif, count, gene, feature, n_alleles, mean_lps, sd_lps, range_lps, per99, OMIM, phenotype, diff) %>%
+  dplyr::group_by(locus, sample, hp, motif, count, gene, feature, n, mean, sd, cv, per99, min, max, OMIM, phenotype, diff) %>%
   dplyr::distinct() %>%
   dplyr::ungroup()
 
 # write to output path provided by caller
-write.table(outliers, file = output_path, sep = "\t", quote = FALSE, row.names = FALSE)
+write.table(all_outliers, file = output_path, sep = "\t", quote = FALSE, row.names = FALSE)
+
+

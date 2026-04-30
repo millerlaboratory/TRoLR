@@ -99,24 +99,18 @@ if [[ ! -f "$BAM2" ]]; then echo "BAM not found: $BAM2"; exit 1; fi
 REPO_ROOT=${REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}
 
 # Resources - relative to repo root
-MOTIFS="$REPO_ROOT/reference_data/vamos.motif.hg38.v2.1.e0.1.noSTRCHIVE.nohp.bed"
-STRCHIVE="$REPO_ROOT/reference_data/STRchive-disease-vamos-20260121.bed"
+MOTIFS="$REPO_ROOT/TRoLR_reference_data/DATA_FILE_1_Curated_TRCompV2_eff0.1_noHp_noSTRchive.tsv"
+STRCHIVE="$REPO_ROOT/TRoLR_reference_data/DATA_FILE_2_Curated_STRchive_loci_v1.0_20260330.bed"
 LPS="$REPO_ROOT/scripts/vamos_lps.py"
-ANNO="$REPO_ROOT/reference_data/TR_GENCODE_v.45_ANNOTATION.bed"
-STRCHIVE_INFO="$REPO_ROOT/reference_data/STRchive-disease-loci.hg38.general.20260121.tsv"
+ANNO="$REPO_ROOT/TRoLR_reference_data/TR_GENCODE_v.45_ANNOTATION_PHENOTYPE_SORTED.bed"
+STRCHIVE_INFO="$REPO_ROOT/TRoLR_reference_data/STRCHIVE_locus_information_annotation.tsv"
 PATHOGENIC_DETECTOR="$REPO_ROOT/scripts/strchive_pathogenic_detector.py"
 TEST_OUTLIERS_R="$REPO_ROOT/scripts/outliers.R"
 
 #Update with final file paths later
-CONTROL_FILE="$REPO_ROOT/reference_data/vamos_asm_lps_e0.1_247_catalog_control_length_counts.tsv.gz"
-REF_FILE="$REPO_ROOT/reference_data/vamos_asm_lps_control_summary.tsv.gz"
+CONTROL_FILE="/waldo/lab_member_space/sgibson/vamos/TABLES/for_zenodo/TRoLR_reference_data/Supp_LPS_MOTIF_ALLELE_COUNTS.tsv.gz"
+REF_FILE="/waldo/lab_member_space/sgibson/vamos/TABLES/for_zenodo/TRoLR_reference_data/DATA_FILE_5_ALL_LOCI_SUMMARY_STATS_PER_MOTIF.tsv.gz"
 
-#module load bedtools/2.31.1
-#module load samtools/1.22
-#module load R
-#source activate vamos-env || source activate vamos-env || true
-
-#mkdir -p "$OUTPUT_DIR"
 cd "$OUTPUT_DIR"
 
 
@@ -155,8 +149,7 @@ done
 if [[ -z "${BAM_MAP[1]:-}" ]]; then BAM_MAP[1]="$BAM1"; fi
 if [[ -z "${BAM_MAP[2]:-}" ]]; then BAM_MAP[2]="$BAM2"; fi
 
-#unzip motif file
-gunzip "$REPO_ROOT/reference_data/vamos.motif.hg38.v2.1.e0.1.noSTRCHIVE.nohp.bed.gz"
+
 
 
 # run vamos for each hap (skip if outputs exist)
@@ -169,7 +162,7 @@ for hap in 1 2; do
 
   if [[ ! -f "$vcf_gz" && ! -f "$vcf_plain" ]]; then
     echo "Running vamos motifs on hap${hap}"
-    run_with_timing "VAMOS motifs hap${hap}" vamos --contig -b "$bam" -r "$MOTIFS" -s "${SAMPLE_ID}_hp${hap}" -S -o "$vcf_plain" -t 20 || true
+    run_with_timing "VAMOS motifs hap${hap}" vamos --contig -b "$bam" -r "$MOTIFS" -s "${SAMPLE_ID}_hp${hap}" -E -S -o "$vcf_plain" -t 20 || true
     if [[ -f "$vcf_plain" ]]; then bgzip -f "$vcf_plain"; fi
   else
     echo "VCF exists for ${SAMPLE_ID}_hp${hap}, skipping motifs call"
@@ -178,17 +171,14 @@ for hap in 1 2; do
 
   if [[ ! -f "$strchive_plain" ]]; then
     echo "Running vamos STRchive on hap${hap}"
-    run_with_timing "VAMOS STRchive hap${hap}" vamos --contig -b "$bam" -r "$STRCHIVE" -s "${SAMPLE_ID}_hp${hap}" -S -o "$strchive_plain" -t 20 || true
+    run_with_timing "VAMOS STRchive hap${hap}" vamos --contig -b "$bam" -r "$STRCHIVE" -s "${SAMPLE_ID}_hp${hap}" -Z -E -S -o "$strchive_plain" -t 20 || true
   else
     echo "STRchive VCF exists for ${SAMPLE_ID}_hp${hap}, skipping"
     log_checkpoint "STRchive VCF skipped for hap${hap} (already exists)"
   fi
 done
 
-#re-compress motif file
-bgzip "$MOTIFS"
 
-#source deactivate vamos-env || true
 
 # Run vamos_lps.py to produce LPS bed using non-strchive vcfs (*.vcf.gz)
 lps_bed="${sample_dir}/${SAMPLE_ID}_lps.bed"
@@ -290,6 +280,8 @@ if(!("feature" %in% colnames(out))) {
     feature_text <- apply(out[, char_cols, drop=FALSE], 1, function(r) paste(na.omit(r), collapse=" "))
     out$feature <- case_when(
       grepl("exon", feature_text, ignore.case = TRUE) ~ "exon",
+      grepl("5'UTR|5UTR", feature_text, ignore.case = TRUE) ~ "5UTR",
+      grepl("3'UTR|3UTR", feature_text, ignore.case = TRUE) ~ "3UTR",
       grepl("UTR", feature_text, ignore.case = TRUE) ~ "UTR",
       grepl("intron", feature_text, ignore.case = TRUE) ~ "intron",
       TRUE ~ "other"
@@ -304,7 +296,7 @@ if(!("feature" %in% colnames(out))) {
 out_filt <- out %>%
   filter(!is.na(motif_len) & motif_len >= 3) %>%
   filter(
-    (tolower(feature) %in% c("exon", "utr")) |
+    (tolower(feature) %in% c("exon", "utr", "5utr", "3utr")) |
     (tolower(feature) == "intron" & !is.na(count) & count >= 100)
   )
 
@@ -333,6 +325,9 @@ if(!dir.exists(plots_dir)) dir.create(plots_dir, recursive=TRUE)
 
 out_pairs <- out_filt %>% select(locus, motif, feature, gene) %>% distinct()
 
+plot_order_file <- file.path(plots_dir, ".plot_order.txt")
+plot_connections <- file(plot_order_file, "w")
+
 for(i in seq_len(nrow(out_pairs))) {
   locus_i <- out_pairs$locus[i]
   motif_i <- out_pairs$motif[i]
@@ -341,7 +336,7 @@ for(i in seq_len(nrow(out_pairs))) {
   sample_count <- max(out_filt$count[out_filt$locus == locus_i & out_filt$motif == motif_i], na.rm=TRUE)
   if(is.infinite(sample_count)) sample_count <- NA_real_
 
-  ctrl_sub <- ctrl %>% filter(locus == locus_i & motif == motif_i & feature == feature_i, gene == gene_i)
+  ctrl_sub <- ctrl %>% filter(locus == locus_i & motif == motif_i)
   if(nrow(ctrl_sub) == 0) next
 
   p <- ggplot(ctrl_sub, aes(x = count, y=n_alleles)) +
@@ -357,7 +352,10 @@ for(i in seq_len(nrow(out_pairs))) {
   motif_hash <- substr(digest(motif_i, algo="sha1"), 1, 8)
   short_locus <- gsub("[^A-Za-z0-9]", "_", substr(locus_i, 1, 30))
   short_motif <- gsub("[^A-Za-z0-9]", "_", substr(motif_i, 1, 20))
-  out_fn <- file.path(plots_dir, paste0(sample_name, "_", feature_i, "_", short_locus, "_", locus_hash, "_", short_motif, "_", motif_hash, "_histogram.png"))
+  out_fn <- file.path(plots_dir, paste0(sprintf("%04d", i), "_", sample_name, "_", feature_i, "_", short_locus, "_", locus_hash, "_", short_motif, "_", motif_hash, "_histogram.png"))
+
+  # Record plot metadata in order (locus, motif, feature, plot_file)
+  writeLines(paste(locus_i, motif_i, feature_i, basename(out_fn), sep="\t"), plot_connections)
 
   # Skip regenerating if the file already exists
   if (file.exists(out_fn)) {
@@ -368,6 +366,7 @@ for(i in seq_len(nrow(out_pairs))) {
   ggsave(filename = out_fn, plot = p, width = 8, height = 5, dpi = 150)
   message("Wrote plot: ", out_fn)
 }
+close(plot_connections)
 message("Plot generation complete")
 R_PLOT
 
@@ -407,9 +406,14 @@ plots_dir_path <- Sys.getenv("PLOTS_DIR")
 control_file <- Sys.getenv("CONTROL_FILE")
 
 # Function to find and display plots for a specific feature
-display_plots_for_feature <- function(feature_name, plot_files) {
-  # Find plots matching this feature
-  feature_plots <- plot_files[grepl(paste0("_", feature_name, "_"), plot_files, ignore.case = TRUE)]
+display_plots_for_feature <- function(feature_name, plot_connections_list, plot_files_legacy) {
+  # First try using the ordered list
+  if(!is.null(plot_connections_list[[feature_name]]) && length(plot_connections_list[[feature_name]]) > 0){
+    feature_plots <- plot_connections_list[[feature_name]]
+  } else {
+    # Fallback to legacy file search
+    feature_plots <- plot_files_legacy[grepl(paste0("_", feature_name, "_"), plot_files_legacy, ignore.case = TRUE)]
+  }
   
   if(length(feature_plots) > 0) {
     cat("\n\n#### Distribution plots\n\n")
@@ -443,12 +447,15 @@ if(file.exists(outliers_path)){
       is_exon <- is_utr <- is_intron <- rep(FALSE, nrow(out))
     }
     
-    # Count each category
+    # Count each category (distinguish 5UTR and 3UTR)
     short_count <- sum(out$motif_len < 3)
     long_mask <- out$motif_len >= 3
     
     exon_count <- sum(is_exon & long_mask)
-    utr_count <- sum(!is_exon & is_utr & long_mask)
+    is_5utr <- grepl("5'UTR|5UTR", feature_text, ignore.case = TRUE)
+    is_3utr <- grepl("3'UTR|3UTR", feature_text, ignore.case = TRUE)
+    utr_5_count <- sum(!is_exon & is_5utr & long_mask)
+    utr_3_count <- sum(!is_exon & is_3utr & long_mask)
     intron_high <- sum(!is_exon & !is_utr & is_intron & !is.na(out$count) & out$count >= 100 & long_mask)
     intron_low <- sum(!is_exon & !is_utr & is_intron & (is.na(out$count) | out$count < 100) & long_mask)
     other_count <- sum(!is_exon & !is_utr & !is_intron & long_mask)
@@ -463,8 +470,8 @@ if(file.exists(outliers_path)){
     }
     
     summary_df <- data.frame(
-      Type = c("Exon", "UTR", "Intron (count ≥ 100)", "Intron (count < 100)", "Other/Unclassified", "Short motifs (<3 bp)", "Pathogenic calls"),
-      Count = c(exon_count, utr_count, intron_high, intron_low, other_count, short_count, pathogenic_count)
+      Type = c("Exon", "5'UTR", "3'UTR", "Intron (count ≥ 100)", "Intron (count < 100)", "Other/Unclassified", "Short motifs (<3 bp)", "Pathogenic calls"),
+      Count = c(exon_count, utr_5_count, utr_3_count, intron_high, intron_low, other_count, short_count, pathogenic_count)
     )
     
     cat("**Outlier type summary:**\n\n")
@@ -481,6 +488,7 @@ if(file.exists(outliers_path)){
 ```
 
 ## Pathogenic calls
+*Pathogenic calls count the number of a pathogenic-associated motif regardless of interruption, resulting in potential false positives. If a count is at or near the pathogenic minimum, please consult the genotype files.*
 
 ```{r pathogenic-table, results='asis'}
 if(nzchar(pathogenic_path) && file.exists(pathogenic_path)){
@@ -567,7 +575,18 @@ if(nzchar(pathogenic_path) && file.exists(pathogenic_path) && file.exists(contro
 ```{r outliers-preprocessing, results='asis'}
 # Load and process outliers data
 plot_files <- character(0)
-if(nzchar(plots_dir_path) && dir.exists(plots_dir_path)){
+plot_order_list <- list()
+
+# Load plot order from file if it exists
+plot_order_file <- file.path(plots_dir_path, ".plot_order.txt")
+if(nzchar(plots_dir_path) && dir.exists(plots_dir_path) && file.exists(plot_order_file)){
+  plot_order <- read.delim(plot_order_file, header=FALSE, col.names=c("locus","motif","feature","filename"), stringsAsFactors=FALSE)
+  # Create lookup lists by feature to maintain order
+  for(feat in unique(plot_order$feature)){
+    plot_order_list[[feat]] <- file.path(plots_dir_path, plot_order$filename[plot_order$feature == feat])
+  }
+} else if(nzchar(plots_dir_path) && dir.exists(plots_dir_path)){
+  # Fallback to listing files if order file doesn't exist
   plot_files <- list.files(plots_dir_path, pattern="\\.png$", full.names=TRUE)
 }
 
@@ -592,12 +611,15 @@ if(file.exists(outliers_path)){
 
     # classify by searching the combined annotation text (robust to different column names)
     is_exon   <- grepl("exon", type_text, ignore.case = TRUE, perl = TRUE)
+    is_5utr   <- grepl("5'UTR|5UTR", type_text, ignore.case = TRUE, perl = TRUE)
+    is_3utr   <- grepl("3'UTR|3UTR", type_text, ignore.case = TRUE, perl = TRUE)
     is_utr    <- grepl("UTR", type_text, ignore.case = TRUE, perl = TRUE)
     is_intron <- grepl("intron", type_text, ignore.case = TRUE, perl = TRUE)
 
     # Select only loci with motif_len >= 3 for these tables
     exon_tab   <- long_motifs[is_exon, , drop=FALSE]
-    utr_tab    <- long_motifs[!is_exon & is_utr, , drop=FALSE]
+    utr_5_tab  <- long_motifs[!is_exon & is_5utr, , drop=FALSE]
+    utr_3_tab  <- long_motifs[!is_exon & is_3utr, , drop=FALSE]
     
     # For introns: only include if count >= 100
     intron_candidates <- long_motifs[!is_exon & !is_utr & is_intron, , drop=FALSE]
@@ -626,24 +648,40 @@ if(exists("exon_tab") && nrow(exon_tab) > 0){
 ```
 
 ```{r exon-outliers-plots, results='asis'}
-if(exists("exon_tab") && nrow(exon_tab) > 0 && length(plot_files) > 0) {
-  display_plots_for_feature("exon", plot_files)
+if(exists("exon_tab") && nrow(exon_tab) > 0 && (length(plot_files) > 0 || length(plot_order_list) > 0)) {
+  display_plots_for_feature("exon", plot_order_list, plot_files)
 }
 ```
 
-### UTR outliers
+### 5'UTR outliers
 
-```{r utr-outliers-table, results='asis'}
-if(exists("utr_tab") && nrow(utr_tab) > 0){
-  DT::datatable(utr_tab, options=list(pageLength=25, scrollX=TRUE))
+```{r utr-5-outliers-table, results='asis'}
+if(exists("utr_5_tab") && nrow(utr_5_tab) > 0){
+  DT::datatable(utr_5_tab, options=list(pageLength=25, scrollX=TRUE))
 } else {
-  cat("No UTR outliers found.\n\n")
+  cat("No 5'UTR outliers found.\n\n")
 }
 ```
 
-```{r utr-outliers-plots, results='asis'}
-if(exists("utr_tab") && nrow(utr_tab) > 0 && length(plot_files) > 0) {
-  display_plots_for_feature("UTR", plot_files)
+```{r utr-5-outliers-plots, results='asis'}
+if(exists("utr_5_tab") && nrow(utr_5_tab) > 0 && (length(plot_files) > 0 || length(plot_order_list) > 0)) {
+  display_plots_for_feature("5UTR", plot_order_list, plot_files)
+}
+```
+
+### 3'UTR outliers
+
+```{r utr-3-outliers-table, results='asis'}
+if(exists("utr_3_tab") && nrow(utr_3_tab) > 0){
+  DT::datatable(utr_3_tab, options=list(pageLength=25, scrollX=TRUE))
+} else {
+  cat("No 3'UTR outliers found.\n\n")
+}
+```
+
+```{r utr-3-outliers-plots, results='asis'}
+if(exists("utr_3_tab") && nrow(utr_3_tab) > 0 && (length(plot_files) > 0 || length(plot_order_list) > 0)) {
+  display_plots_for_feature("3UTR", plot_order_list, plot_files)
 }
 ```
 
@@ -659,8 +697,8 @@ if(exists("intron_tab") && nrow(intron_tab) > 0){
 ```
 
 ```{r intron-outliers-plots, results='asis'}
-if(exists("intron_tab") && nrow(intron_tab) > 0 && length(plot_files) > 0) {
-  display_plots_for_feature("intron", plot_files)
+if(exists("intron_tab") && nrow(intron_tab) > 0 && (length(plot_files) > 0 || length(plot_order_list) > 0)) {
+  display_plots_for_feature("intron", plot_order_list, plot_files)
 }
 ```
 
@@ -676,15 +714,35 @@ if(exists("other_tab") && nrow(other_tab) > 0){
 ```
 
 ```{r other-outliers-plots, results='asis'}
-if(exists("other_tab") && nrow(other_tab) > 0 && length(plot_files) > 0) {
-  # Look for plots that don't match exon/UTR/intron
-  other_plots <- plot_files[!grepl("_exon_|_UTR_|_utr_|_intron_", plot_files)]
-  if(length(other_plots) > 0) {
-    cat("\n\n#### Distribution plots\n\n")
-    cat("Control population distributions with sample value (red dashed line):\n\n")
-    for(plot_file in other_plots) {
-      # Display plot without filename
-      cat(sprintf("![](%s){width=85%%}\n\n", plot_file))
+if(exists("other_tab") && nrow(other_tab) > 0) {
+  # Look for plots that don't match exon/5UTR/3UTR/intron patterns
+  if(length(plot_order_list) > 0){
+    # Get all plots not in the known feature categories
+    all_features <- names(plot_order_list)
+    known_features <- c("exon", "5UTR", "3UTR", "intron")
+    other_features <- setdiff(all_features, known_features)
+    
+    for(feat in other_features){
+      if(!is.null(plot_order_list[[feat]]) && length(plot_order_list[[feat]]) > 0){
+        if(!exists("other_plots_shown")){
+          cat("\n\n#### Distribution plots\n\n")
+          cat("Control population distributions with sample value (red dashed line):\n\n")
+          other_plots_shown <- TRUE
+        }
+        for(plot_file in plot_order_list[[feat]]){
+          cat(sprintf("![](%s){width=85%%}\n\n", plot_file))
+        }
+      }
+    }
+  } else if(length(plot_files) > 0){
+    # Fallback to legacy filtering
+    other_plots <- plot_files[!grepl("_exon_|_5UTR_|_3UTR_|_intron_", plot_files)]
+    if(length(other_plots) > 0) {
+      cat("\n\n#### Distribution plots\n\n")
+      cat("Control population distributions with sample value (red dashed line):\n\n")
+      for(plot_file in other_plots) {
+        cat(sprintf("![](%s){width=85%%}\n\n", plot_file))
+      }
     }
   }
 }

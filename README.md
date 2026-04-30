@@ -1,3 +1,4 @@
+![Logo](banner/TRoLR_logo.png)
 # TRoLR - Tandem Repeat outliers (identified with) Long Reads
 
 TRoLR is a comprehensive pipeline for identifying and analyzing tandem repeat outliers in long-read sequencing data, with a focus on detecting potential pathogenic expansions.
@@ -41,7 +42,16 @@ conda activate trolr-env
 chmod +x TRoLR.sh
 
 ```
-**TRoLR uses an older version of vamos, we will update to the newest version shortly**
+
+### Install Reference Data
+
+The reference is hosted on Zenodo as it is too large to host on the GitHub Repo
+In the TRoLR directory run the following
+
+```
+wget #link here
+tar -xzf TRoLR_reference_data.tar.gz
+```
 
 ## Usage
 
@@ -114,12 +124,12 @@ The pipeline generates a sample-specific directory containing:
 ## Reference Data
 
 ```
-vamos.motif.hg38.v2.1.e0.1.noSTRCHIVE.nohp.bed.gz                   #TR catalog
-STRchive-disease-vamos-20260121.bed                                 #STRChive Catalog
-TR_GENCODE_v.45_ANNOTATION.bed                                      #Gencode v45 annotation
-STRchive-disease-loci.hg38.general.20260121.tsv                     #STRChive information including pathogenic thresholds
-vamos_asm_lps_e0.1_247_catalog_control_length_counts.tsv.gz         #The count of each LPS length at each locus. For generating plots
-amos_asm_lps_control_summary.tsv.gz                                 #Summary statistics for identifing outliers
+DATA_FILE_1_Curated_TRCompV2_eff0.1_noHp_noSTRchive.tsv   #TR catalog
+DATA_FILE_2_Curated_STRchive_loci_v1.0_20260330.bed       #STRChive Catalog
+TR_GENCODE_v.45_ANNOTATION_PHENOTYPE_SORTED.bed           #Gencode v45 annotation
+STRCHIVE_locus_information_annotation.tsv                 #STRChive information including pathogenic thresholds
+Supp_LPS_MOTIF_ALLELE_COUNTS.tsv.gz                       #The count of each LPS length at each locus. For generating plots
+DATA_FILE_5_ALL_LOCI_SUMMARY_STATS_PER_MOTIF.tsv.gz       #Summary statistics for identifing outliers
 
 ```
 
