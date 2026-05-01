@@ -51,7 +51,8 @@ The reference data is hosted on AWS as it is too large to host here
 In the TRoLR directory run the following
 
 ```
-wget #link here
+bash
+wget wget https://s3.amazonaws.com/1000g-ont/Gibson_etal_TRoLR_preprint_supplemental/TRoLR_reference_data.tar.gz
 tar -xzf TRoLR_reference_data.tar.gz
 ```
 
