@@ -1,7 +1,7 @@
 ![Logo](banner/TRoLR_logo.png)
 # TRoLR - Tandem Repeat outliers (identified with) Long Reads
 
-TRoLR is a comprehensive pipeline for identifying and analyzing tandem repeat outliers in long-read sequencing data, with a focus on detecting potential pathogenic expansions.
+TRoLR is a comprehensive pipeline for identifying and analyzing tandem repeat outliers in long-read sequencing data, with a focus on detecting potential pathogenic expansions. TRoLR uses summary statistics from 471 samples between the 1KGP-LRSC and the HPRC to identify outliers based on the Longest Pure Repeat Segment (LPS) Length. Sample information is provided in `Population_information`.
 
 TRoLR uses VAMOS developed by the Chaisson Lab (https://github.com/ChaissonLab/vamos, Ren et al., 2023)
 
