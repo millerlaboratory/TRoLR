@@ -81,7 +81,7 @@ run_with_timing() {
 
 
 if [[ $# -lt 3 ]]; then
-  echo "Usage: $0 <BAM_HP1> <BAM_HP2> <KARYOTYPE: XX|XY> [OUTPUT_DIR]"
+  echo "Usage: $0 <BAM_HP1> <BAM_HP2> <KARYOTYPE: XX|XY> [EXISTING_OUTPUT_DIR]"
   exit 1
 fi
 
