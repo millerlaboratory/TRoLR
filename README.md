@@ -5,7 +5,7 @@ TRoLR is a comprehensive pipeline for identifying and analyzing tandem repeat ou
 
 TRoLR uses VAMOS developed by the Chaisson Lab (https://github.com/ChaissonLab/vamos, Ren et al., 2023)
 
-*TRoLR v.1 has been depricated in favor of TRComp DB v2.0 and the newest version of vamos. See releases if you would prefer to install the old version*
+*TRoLR v.1 has been depricated in favor of TRComp DB v2.0 and vamos_v3.0.6. See releases if you would prefer to install the old version*
 
 ## Overview
 
@@ -47,7 +47,7 @@ chmod +x TRoLR.sh
 
 ### Install Reference Data
 
-The reference is hosted on Zenodo as it is too large to host on the GitHub Repo
+The reference data is hosted on AWS as it is too large to host here
 In the TRoLR directory run the following
 
 ```
@@ -102,9 +102,11 @@ Using GIAB sample data from *chr9:82230983-92919503*, you can test the program b
 ./TRoLR.sh HG002 HG002_sample_data/HG002_asm_1.hg38.bam HG002_sample_data/HG002_asm_2.hg38.bam XY ./results/
 ```
 
+**The `results` directory must be an already existing filepath**
+
 ## Output
 
-The pipeline generates a sample-specific directory containing:
+The pipeline generates a sample-specific directory in the output containing:
 ```
 
 <sample_name>/
@@ -122,6 +124,7 @@ The pipeline generates a sample-specific directory containing:
     └── *.png
 
 ```
+An example html output from the HG002 sample data can be found in `example_html`
 
 ## Reference Data
 

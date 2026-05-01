@@ -108,8 +108,8 @@ PATHOGENIC_DETECTOR="$REPO_ROOT/scripts/strchive_pathogenic_detector.py"
 TEST_OUTLIERS_R="$REPO_ROOT/scripts/outliers.R"
 
 #Update with final file paths later
-CONTROL_FILE="/waldo/lab_member_space/sgibson/vamos/TABLES/for_zenodo/TRoLR_reference_data/Supp_LPS_MOTIF_ALLELE_COUNTS.tsv.gz"
-REF_FILE="/waldo/lab_member_space/sgibson/vamos/TABLES/for_zenodo/TRoLR_reference_data/DATA_FILE_5_ALL_LOCI_SUMMARY_STATS_PER_MOTIF.tsv.gz"
+CONTROL_FILE="$REPO_ROOT/TRoLR_reference_data/Supp_LPS_MOTIF_ALLELE_COUNTS.tsv.gz"
+REF_FILE="$REPO_ROOT/TRoLR_reference_data/DATA_FILE_5_ALL_LOCI_SUMMARY_STATS_PER_MOTIF.tsv.gz"
 
 cd "$OUTPUT_DIR"
 
