@@ -143,5 +143,5 @@ DATA_FILE_5_ALL_LOCI_SUMMARY_STATS_PER_MOTIF.tsv.gz       #Summary statistics fo
 ```
 ## Citing TRoLR
 
-*Preprint information coming soon!*
+If you use TRoLR in your publication, please cite the preprint: https://www.medrxiv.org/content/10.64898/2026.04.30.26352103v1
 
